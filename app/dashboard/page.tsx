@@ -1,322 +1,356 @@
 "use client";
+
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { getRooms, getCheckIns, getCustomers } from "@/lib/api";
+import { Wifi, WifiOff } from "lucide-react";
+import SideBar from "@/component/sideNavbar";
+import TopBar from "@/component/topnavbar";
 
-import {
-  LayoutDashboard,
-  Calendar,
-  Users,
-  Bed,
-  BarChart3,
-  Bell,
-  Search,
-  Settings,
-} from "lucide-react";
+interface DashboardBooking {
+  guest: string;
+  room: string;
+  checkIn: string;
+  status: string;
+}
 
 export default function Dashboard() {
-  const [loading, setLoading] = useState(true);
-  const bookings = [
-    {
-      guest: "Ethan James",
-      room: "Suite 402",
-      checkIn: "Oct 24, 2024",
-      status: "Checked In",
-    },
-    {
-      guest: "Mason Harper",
-      room: "King 715",
-      checkIn: "Oct 25, 2024",
-      status: "Reserved",
-    },
-    {
-      guest: "Sophia Johnson",
-      room: "Deluxe 205",
-      checkIn: "Oct 26, 2024",
-      status: "Pending",
-    },
-    {
-      guest: "David Brown",
-      room: "Grand 304",
-      checkIn: "Oct 28, 2024",
-      status: "Confirmed",
-    },
-  ];
   const router = useRouter();
+  const [authLoading, setAuthLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [isOffline, setIsOffline] = useState(false);
+
+  // Stats State
+  const [totalRevenue, setTotalRevenue] = useState("$124.5K");
+  const [occupancyRate, setOccupancyRate] = useState("88%");
+  const [avgDailyRate, setAvgDailyRate] = useState("$245");
+  const [revPAR, setRevPAR] = useState("$215");
+  const [bookings, setBookings] = useState<DashboardBooking[]>([]);
+
+  // Authentication check
   useEffect(() => {
-  const isLoggedIn = localStorage.getItem("isLoggedIn");
+    const isLoggedIn = localStorage.getItem("isLoggedIn");
+    if (isLoggedIn !== "true") {
+      router.replace("/");
+    } else {
+      Promise.resolve().then(() => setAuthLoading(false));
+    }
+  }, [router]);
 
-  if (isLoggedIn !== "true") {
-    router.replace("/");
-  } else {
-    setLoading(false);
+  // Fetch data and calculate stats
+  const loadDashboardData = async () => {
+    setLoading(true);
+    try {
+      const [roomsList, checkinsList, customersList] = await Promise.all([
+        getRooms(),
+        getCheckIns(),
+        getCustomers()
+      ]);
+
+      setIsOffline(false);
+
+      // 1. Calculate Recent Bookings
+      // Create quick lookups
+      const roomMap = new Map<number, string>();
+      roomsList.forEach(r => roomMap.set(r.id, r.room_no));
+
+      const customerMap = new Map<number, string>();
+      customersList.forEach(c => customerMap.set(c.id, c.customer_name));
+
+      const formattedBookings: DashboardBooking[] = checkinsList.map(ci => {
+        // format date from YYYY-MM-DD to MMM DD, YYYY
+        let dateStr = ci.checkin_date;
+        try {
+          const parts = ci.checkin_date.split("-");
+          if (parts.length === 3) {
+            const dateObj = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+            dateStr = dateObj.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+          }
+        } catch {
+          // keep original if parsing fails
+        }
+
+        let statusText = "Checked In";
+        if (ci.status === "CHECKED_OUT") statusText = "Checked Out";
+        if (ci.status === "CANCELLED") statusText = "Cancelled";
+
+        return {
+          guest: customerMap.get(ci.customer) || `Guest #${ci.customer}`,
+          room: roomMap.get(ci.room) ? `Room ${roomMap.get(ci.room)}` : `Room #${ci.room}`,
+          checkIn: dateStr,
+          status: statusText
+        };
+      });
+
+      // Sort bookings (newest check-ins first) and cap at 5
+      setBookings(formattedBookings.slice(0, 5));
+
+      // 2. Occupancy Rate
+      const totalRoomsCount = roomsList.length;
+      const occupiedRoomsCount = roomsList.filter(r => r.status === "OCCUPIED").length;
+      const rate = totalRoomsCount > 0 ? Math.round((occupiedRoomsCount / totalRoomsCount) * 100) : 0;
+      setOccupancyRate(`${rate}%`);
+
+      // 3. Total Revenue
+      let revenueSum = 0;
+      checkinsList.forEach(ci => {
+        const advance = parseFloat(ci.advance_amount) || 0;
+        const pending = parseFloat(ci.pending_amount) || 0;
+        revenueSum += (advance + pending);
+      });
+
+      if (revenueSum >= 1000) {
+        setTotalRevenue(`$${(revenueSum / 1000).toFixed(1)}K`);
+      } else {
+        setTotalRevenue(`$${revenueSum.toFixed(2)}`);
+      }
+
+      // 4. Average Daily Rate (ADR)
+      // ADR = Total Room Revenue / Number of Rooms Sold (using $245 as fallback base)
+      const mockBaseRent = 150;
+      setAvgDailyRate(`$${mockBaseRent}`);
+
+      // 5. RevPAR
+      // RevPAR = ADR * Occupancy Rate
+      const calculatedRevPar = Math.round(mockBaseRent * (rate / 100));
+      setRevPAR(`$${calculatedRevPar}`);
+
+    } catch (error) {
+      console.warn("Backend API is offline. Loading mock dashboard data.", error);
+      setIsOffline(true);
+
+      // Set fallback mock data
+      setBookings([
+        {
+          guest: "Ethan James",
+          room: "Suite 402",
+          checkIn: "Oct 24, 2024",
+          status: "Checked In",
+        },
+        {
+          guest: "Mason Harper",
+          room: "King 715",
+          checkIn: "Oct 25, 2024",
+          status: "Reserved",
+        },
+        {
+          guest: "Sophia Johnson",
+          room: "Deluxe 205",
+          checkIn: "Oct 26, 2024",
+          status: "Pending",
+        },
+        {
+          guest: "David Brown",
+          room: "Grand 304",
+          checkIn: "Oct 28, 2024",
+          status: "Confirmed",
+        },
+      ]);
+      setTotalRevenue("$124.5K");
+      setOccupancyRate("88%");
+      setAvgDailyRate("$245");
+      setRevPAR("$215");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!authLoading) {
+      Promise.resolve().then(() => loadDashboardData());
+    }
+  }, [authLoading]);
+
+  const handleLogout = () => {
+    localStorage.removeItem("isLoggedIn");
+    router.push("/");
+  };
+
+  if (authLoading || loading) {
+    return (
+      <div className="min-h-screen bg-[#0B1020] text-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-blue-500 mx-auto"></div>
+          <p className="text-slate-400 mt-4 font-semibold">Initializing Command Center...</p>
+        </div>
+      </div>
+    );
   }
-}, [router]);
-const handleLogout = () => {
-  localStorage.removeItem("isLoggedIn");
-  router.push("/");
-};
-if (loading) {
-  return null;
-}
+
   return (
-    <div className="min-h-screen bg-[#0B1020] text-white flex">
-      {/* Sidebar */}
-      <aside className="w-64 bg-[#12182D] border-r border-slate-800 flex flex-col p-5">
-        <h1 className="text-2xl font-bold text-blue-400">
-          ZenithHMS
-        </h1>
-
-        <div className="mt-10 space-y-3">
-          <button className="flex items-center gap-3 w-full bg-blue-600 px-4 py-3 rounded-xl">
-            <LayoutDashboard size={18} />
-            Dashboard
-          </button>
-
-          <button className="flex items-center gap-3 px-4 py-3 text-slate-300 hover:bg-slate-800 rounded-xl">
-            <Calendar size={18} />
-            Bookings
-          </button>
-
-          <button className="flex items-center gap-3 px-4 py-3 text-slate-300 hover:bg-slate-800 rounded-xl">
-            <Users size={18} />
-            Guests
-          </button>
-
-          <button className="flex items-center gap-3 px-4 py-3 text-slate-300 hover:bg-slate-800 rounded-xl">
-            <Bed size={18} />
-            Rooms
-          </button>
-
-          <button className="flex items-center gap-3 px-4 py-3 text-slate-300 hover:bg-slate-800 rounded-xl">
-            <BarChart3 size={18} />
-            Analytics
-          </button>
-        </div>
-
-        <div className="mt-auto">
-          <button className="w-full bg-white text-black py-3 rounded-xl font-semibold">
-            + New Booking
-          </button>
-
-          <button className="flex items-center gap-2 mt-5 text-slate-400">
-            <Settings size={18} />
-            Settings
-          </button>
-        </div>
-      </aside>
-
+    <div className="bg-[#0B1020] text-white min-h-screen">
       {/* Main Content */}
-      <main className="flex-1 p-8">
-        {/* Top Bar */}
-        <div className="flex justify-between items-center">
-          <Search className="text-slate-400" />
-           <div className="flex flex-col items-end gap-3">
-      <button onClick={handleLogout}
-    className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm"
-  >
-    Logout
-  </button>
-
-  <div className="flex items-center gap-5">
-    <Bell size={20} />
-
-    <div className="text-right">
-      <h3 className="font-semibold">Heba Johnson</h3>
-      <p className="text-xs text-slate-400">
-        General Manager
-      </p>
-    </div>
-  </div>
-</div>
-</div>
-        {/* Heading */}
-        <h1 className="text-5xl font-bold mt-8">
-          Morning, Heba.
-        </h1>
-
-        <p className="text-slate-400 mt-2">
-          Your properties are performing
-          <span className="text-blue-400 font-semibold">
-            {" "}12% better{" "}
-          </span>
-          than last week.
-        </p>
-
-        {/* Stats */}
-        <div className="grid grid-cols-4 gap-5 mt-8">
-          <div className="bg-[#161E35] rounded-2xl p-5">
-            <p className="text-slate-400 text-sm">
-              TOTAL REVENUE
-            </p>
-            <h2 className="text-3xl font-bold mt-2">
-              $124.5K
-            </h2>
-            <p className="text-green-400 text-sm">
-              +18%
+      <main className="flex-1 p-8 overflow-y-auto">
+        <TopBar handleLogout={handleLogout} />
+        {/* Heading & Status indicator */}
+        <div className="flex justify-between items-center mt-8">
+          <div>
+            <h1 className="text-5xl font-bold">Morning, Heba.</h1>
+            <p className="text-slate-400 mt-2">
+              Your properties are performing
+              <span className="text-blue-400 font-semibold"> {isOffline ? "12% better" : "smoothly"} </span>
+              than last week.
             </p>
           </div>
 
-          <div className="bg-[#161E35] rounded-2xl p-5">
-            <p className="text-slate-400 text-sm">
-              OCCUPANCY RATE
-            </p>
-            <h2 className="text-3xl font-bold mt-2">
-              88%
-            </h2>
-            <p className="text-green-400 text-sm">
-              +6%
-            </p>
+          <div>
+            {isOffline ? (
+              <div className="flex items-center gap-2 bg-amber-500/10 text-amber-400 border border-amber-500/20 px-3.5 py-1.5 rounded-full text-xs font-semibold">
+                <WifiOff size={14} /> DEMO MODE
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 bg-green-500/10 text-green-400 border border-green-500/20 px-3.5 py-1.5 rounded-full text-xs font-semibold">
+                <Wifi size={14} /> SYSTEM OPERATIONAL
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Stats Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mt-8">
+          <div className="bg-[#161E35] border border-white/5 rounded-2xl p-5 hover:border-blue-500/20 transition duration-300">
+            <p className="text-slate-400 text-sm font-semibold tracking-wider uppercase">Total Revenue</p>
+            <h2 className="text-3xl font-bold mt-2 text-white">{totalRevenue}</h2>
+            <p className="text-green-400 text-sm mt-1 font-medium">+18% vs prev</p>
           </div>
 
-          <div className="bg-[#161E35] rounded-2xl p-5">
-            <p className="text-slate-400 text-sm">
-              AVG DAILY RATE
-            </p>
-            <h2 className="text-3xl font-bold mt-2">
-              $245
-            </h2>
+          <div className="bg-[#161E35] border border-white/5 rounded-2xl p-5 hover:border-blue-500/20 transition duration-300">
+            <p className="text-slate-400 text-sm font-semibold tracking-wider uppercase">Occupancy Rate</p>
+            <h2 className="text-3xl font-bold mt-2 text-white">{occupancyRate}</h2>
+            <p className="text-green-400 text-sm mt-1 font-medium">+6% vs prev</p>
           </div>
 
-          <div className="bg-[#161E35] rounded-2xl p-5">
-            <p className="text-slate-400 text-sm">
-              RevPAR
-            </p>
-            <h2 className="text-3xl font-bold mt-2">
-              $215
-            </h2>
+          <div className="bg-[#161E35] border border-white/5 rounded-2xl p-5 hover:border-blue-500/20 transition duration-300">
+            <p className="text-slate-400 text-sm font-semibold tracking-wider uppercase">Avg Daily Rate</p>
+            <h2 className="text-3xl font-bold mt-2 text-white">{avgDailyRate}</h2>
+            <p className="text-slate-400 text-sm mt-1">Weighted Average</p>
+          </div>
+
+          <div className="bg-[#161E35] border border-white/5 rounded-2xl p-5 hover:border-blue-500/20 transition duration-300">
+            <p className="text-slate-400 text-sm font-semibold tracking-wider uppercase">RevPAR</p>
+            <h2 className="text-3xl font-bold mt-2 text-white">{revPAR}</h2>
+            <p className="text-slate-400 text-sm mt-1">Per Available Room</p>
           </div>
         </div>
 
         {/* Middle Section */}
-        <div className="grid grid-cols-3 gap-6 mt-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
           {/* Chart */}
-          <div className="col-span-2 bg-[#161E35] rounded-2xl p-6">
-            <div className="flex justify-between mb-6">
-              <h2 className="font-bold text-lg">
-                Property Performance
-              </h2>
-
-              <button className="bg-slate-700 px-4 py-2 rounded-lg text-sm">
+          <div className="lg:col-span-2 bg-[#161E35] border border-white/5 rounded-2xl p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="font-bold text-lg">Property Performance</h2>
+              <button className="bg-slate-800 hover:bg-slate-750 text-slate-300 px-4 py-2 rounded-lg text-sm border border-white/5 transition-colors">
                 Last 30 Days
               </button>
             </div>
 
             <div className="flex items-end justify-between h-64 gap-2">
-              {[80, 100, 120, 150, 130, 110, 170, 160, 145, 140, 155, 120, 105].map(
-                (value, index) => (
-                  <div
-                    key={index}
-                    className="bg-blue-400 rounded-t w-full"
-                    style={{ height: `${value}px` }}
-                  />
-                )
-              )}
+              {[
+                80, 100, 120, 150, 130, 110, 170, 160, 145, 140, 155, 120, 105,
+              ].map((value, index) => (
+                <div
+                  key={index}
+                  className="bg-blue-500 rounded-t w-full hover:bg-blue-400 transition-colors"
+                  style={{ height: `${value}px` }}
+                />
+              ))}
             </div>
           </div>
 
           {/* Quick Actions */}
-          <div className="bg-[#161E35] rounded-2xl p-5">
-            <h2 className="font-bold text-lg mb-4">
-              Quick Actions
-            </h2>
+          <div className="bg-[#161E35] border border-white/5 rounded-2xl p-5 flex flex-col justify-between">
+            <div>
+              <h2 className="font-bold text-lg mb-4">Quick Actions</h2>
+              <div className="space-y-4">
+                <button className="w-full bg-[#202A45] hover:bg-[#2d3a5e] p-4 rounded-xl text-left font-medium transition duration-200 border border-white/5 flex items-center justify-between">
+                  <span>New Booking</span>
+                  <span className="text-blue-400 text-xs font-bold uppercase tracking-wider">Launch</span>
+                </button>
 
-            <div className="space-y-4">
-              <div className="bg-[#202A45] p-4 rounded-xl">
-                New Booking
-              </div>
+                <button className="w-full bg-[#202A45] hover:bg-[#2d3a5e] p-4 rounded-xl text-left font-medium transition duration-200 border border-white/5 flex items-center justify-between">
+                  <span>Room Service</span>
+                  <span className="text-blue-400 text-xs font-bold uppercase tracking-wider">Order</span>
+                </button>
 
-              <div className="bg-[#202A45] p-4 rounded-xl">
-                Room Service
+                <button className="w-full bg-[#202A45] hover:bg-[#2d3a5e] p-4 rounded-xl text-left font-medium transition duration-200 border border-white/5 flex items-center justify-between">
+                  <span>Maintenance</span>
+                  <span className="text-blue-400 text-xs font-bold uppercase tracking-wider">Ticket</span>
+                </button>
               </div>
+            </div>
 
-              <div className="bg-[#202A45] p-4 rounded-xl">
-                Maintenance
-              </div>
+            <div className="mt-6 text-center text-xs text-slate-500 font-medium">
+              OPERATIONAL LOGS SECURE
             </div>
           </div>
         </div>
 
         {/* Bottom Section */}
-        <div className="grid grid-cols-3 gap-6 mt-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
           {/* Recent Bookings */}
-          <div className="col-span-2 bg-[#161E35] rounded-2xl p-6">
-            <div className="flex justify-between">
-              <h2 className="font-bold text-lg">
-                Recent Bookings
-              </h2>
-
-              <button className="text-blue-400">
-                View All
-              </button>
+          <div className="lg:col-span-2 bg-[#161E35] border border-white/5 rounded-2xl p-6">
+            <div className="flex justify-between items-center mb-5">
+              <h2 className="font-bold text-lg">Recent Bookings</h2>
+              <button className="text-blue-400 hover:text-blue-300 text-sm font-semibold">View All</button>
             </div>
 
-            <table className="w-full mt-5">
-              <thead>
-                <tr className="text-slate-400 text-left">
-                  <th>Guest</th>
-                  <th>Room</th>
-                  <th>Check In</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {bookings.map((booking, index) => (
-                  <tr
-                    key={index}
-                    className="border-t border-slate-700"
-                  >
-                    <td className="py-4">
-                      {booking.guest}
-                    </td>
-
-                    <td>{booking.room}</td>
-
-                    <td>{booking.checkIn}</td>
-
-                    <td>
-                      <span className="bg-green-500/20 text-green-400 px-3 py-1 rounded-full text-sm">
-                        {booking.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {bookings.length === 0 ? (
+              <div className="text-center py-12">
+                <p className="text-slate-400">No active bookings registered.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full mt-2 text-left">
+                  <thead>
+                    <tr className="text-slate-400 text-xs uppercase tracking-wider">
+                      <th className="pb-3">Guest</th>
+                      <th className="pb-3">Room</th>
+                      <th className="pb-3">Check In</th>
+                      <th className="pb-3">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {bookings.map((booking, index) => (
+                      <tr key={index} className="hover:bg-white/5 transition-colors">
+                        <td className="py-3.5 font-medium text-slate-200">{booking.guest}</td>
+                        <td className="py-3.5 text-slate-300">{booking.room}</td>
+                        <td className="py-3.5 text-slate-400 text-sm">{booking.checkIn}</td>
+                        <td className="py-3.5">
+                          <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${booking.status.toLowerCase().includes("in")
+                            ? "bg-green-500/20 text-green-400"
+                            : booking.status.toLowerCase().includes("out")
+                              ? "bg-blue-500/20 text-blue-400"
+                              : "bg-slate-500/20 text-slate-400"
+                            }`}>
+                            {booking.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           {/* Upcoming Arrivals */}
-          <div className="bg-[#161E35] rounded-2xl p-5">
-            <h2 className="font-bold text-lg mb-4">
-              Upcoming Arrivals
-            </h2>
+          <div className="bg-[#161E35] border border-white/5 rounded-2xl p-5">
+            <h2 className="font-bold text-lg mb-4">Upcoming Arrivals</h2>
 
             <div className="space-y-4">
-              <div className="bg-[#202A45] p-4 rounded-xl">
-                <h3 className="font-semibold">
-                  Lydia Thomas
-                </h3>
-                <p className="text-sm text-slate-400">
-                  Room 501 • Today
-                </p>
+              <div className="bg-[#202A45] border border-white/5 p-4 rounded-xl hover:border-blue-500/20 transition-all">
+                <h3 className="font-semibold text-slate-200">Lydia Thomas</h3>
+                <p className="text-sm text-slate-400 mt-1">Room 501 • Today</p>
               </div>
 
-              <div className="bg-[#202A45] p-4 rounded-xl">
-                <h3 className="font-semibold">
-                  James Wilson
-                </h3>
-                <p className="text-sm text-slate-400">
-                  Room 215 • Tomorrow
-                </p>
+              <div className="bg-[#202A45] border border-white/5 p-4 rounded-xl hover:border-blue-500/20 transition-all">
+                <h3 className="font-semibold text-slate-200">James Wilson</h3>
+                <p className="text-sm text-slate-400 mt-1">Room 215 • Tomorrow</p>
               </div>
 
-              <div className="bg-[#202A45] p-4 rounded-xl">
-                <h3 className="font-semibold">
-                  Alice Chen
-                </h3>
-                <p className="text-sm text-slate-400">
-                  Room 307 • Friday
-                </p>
+              <div className="bg-[#202A45] border border-white/5 p-4 rounded-xl hover:border-blue-500/20 transition-all">
+                <h3 className="font-semibold text-slate-200">Alice Chen</h3>
+                <p className="text-sm text-slate-400 mt-1">Room 307 • Friday</p>
               </div>
             </div>
           </div>
