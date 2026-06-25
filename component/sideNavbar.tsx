@@ -57,9 +57,9 @@ export default function SideBar() {
             Customers
           </Link>
 
-          <Link href="/guests" className={getLinkClass("/guests")}>
+          <Link href="/room-types" className={getLinkClass("/room-types")}>
             <Users size={18} />
-            Guests
+            Room Types
           </Link>
 
           <Link href="/rooms" className={getLinkClass("/rooms")}>
