@@ -77,6 +77,26 @@ export const getRoomTypes = async (): Promise<RoomType[]> => {
   return response.data;
 };
 
+export const createRoomType = async (
+  roomTypeData: Omit<RoomType, "id">
+): Promise<RoomType> => {
+  const response = await api.post<RoomType>("/master/room-types/", roomTypeData);
+  return response.data;
+};
+
+export const updateRoomType = async (
+  id: number,
+  roomTypeData: Partial<RoomType>
+): Promise<RoomType> => {
+  const response = await api.patch<RoomType>(`/master/room-types/${id}/`, roomTypeData);
+  return response.data;
+};
+
+export const deleteRoomType = async (id: number): Promise<void> => {
+  // Ensured error catching clean-up mapping
+  await api.delete(`/master/room-types/${id}/`);
+};
+
 export const createRoom = async (roomData: Omit<Room, "id" | "room_type_name">): Promise<Room> => {
   const response = await api.post<Room>("/master/rooms/", roomData);
   return response.data;

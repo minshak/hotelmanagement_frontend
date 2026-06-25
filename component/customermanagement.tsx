@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import api from "../lib/api";
-import { Pencil, Trash2, Plus, Eye } from "lucide-react";
+import { Pencil, Trash2Pencil, Trash2, Plus, Eye } from "lucide-react";
 
 interface Customer {
   id: number;

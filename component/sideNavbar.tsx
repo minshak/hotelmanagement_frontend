@@ -56,12 +56,6 @@ export default function SideBar() {
             <UserCircle size={18} />
             Customers
           </Link>
-
-          <Link href="/room-types" className={getLinkClass("/room-types")}>
-            <Users size={18} />
-            Room Types
-          </Link>
-
           <Link href="/rooms" className={getLinkClass("/rooms")}>
             <Bed size={18} />
             Rooms
