@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import api, { getRooms, getRoomTypes } from "../lib/api";
-import { Users, Receipt, Calendar, Clock, CreditCard, ChevronLeft, Banknote, Percent } from "lucide-react";
+import { Users, Receipt, Calendar, Clock, CreditCard, ChevronLeft, Banknote, Percent, CheckCircle2, History } from "lucide-react";
 
 interface CheckInRecord {
   id: number;
@@ -13,6 +13,22 @@ interface CheckInRecord {
   checkin_time?: string; // Format: HH:MM
   advance_amount?: number;
   pay_mode?: string;
+  status?: string;
+}
+
+interface CheckoutRecord {
+  id: number;
+  checkin: number | CheckInRecord; // Can be ID or nested object based on serializer
+  checkout_date: string;
+  checkout_time: string;
+  total_days: number;
+  balance_paid: string;
+  discount_amount?: string;
+  pay_mode: string;
+  remarks?: string;
+  // Fallbacks for flattened or custom serialized properties
+  room_no?: string;
+  customer_name?: string;
 }
 
 interface Room {
@@ -31,6 +47,7 @@ interface RoomType {
 
 export default function GuestCheckout() {
   const [checkins, setCheckins] = useState<CheckInRecord[]>([]);
+  const [checkouts, setCheckouts] = useState<CheckoutRecord[]>([]); // New Checkout History State
   const [rooms, setRooms] = useState<Room[]>([]);
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
   const [selectedRecord, setSelectedRecord] = useState<CheckInRecord | null>(null);
@@ -40,8 +57,8 @@ export default function GuestCheckout() {
   const [checkoutTime, setCheckoutTime] = useState("");
   const [payMode, setPayMode] = useState("CASH");
   const [remarks, setRemarks] = useState("");
-  const [discount, setDiscount] = useState<string>("0"); // New discount state
-  const [amountPaid, setAmountPaid] = useState<string>(""); // Tracks net amount collected
+  const [discount, setDiscount] = useState<string>("0");
+  const [amountPaid, setAmountPaid] = useState<string>("");
 
   // Initialize date & time on client side to prevent Next.js SSR hydration mismatches
   useEffect(() => {
@@ -56,6 +73,10 @@ export default function GuestCheckout() {
     try {
       const checkinRes = await api.get("/reservations/checkins/");
       setCheckins(checkinRes.data || []);
+
+      // Fetch Checkout history list from backend viewset
+      const checkoutRes = await api.get("/reservations/checkouts/");
+      setCheckouts(checkoutRes.data || []);
 
       const roomRes = await getRooms();
       setRooms(roomRes || []);
@@ -145,24 +166,21 @@ export default function GuestCheckout() {
 
     const enteredAmount = parseFloat(amountPaid) || 0;
     const currentDiscount = parseFloat(discount) || 0;
-    // Net target balance calculated after factoring out discounts
     const expectedNetBalance = parseFloat((billingCalculations.balanceAmount - currentDiscount).toFixed(2));
 
-    // Strict Validation: Ensure user-entered amount matches the computed net balance due
     if (enteredAmount !== expectedNetBalance) {
       alert(`Payment Validation Error: The entered Amount Paid (₹${enteredAmount}) must exactly match the Balance Payable Due minus Discount (₹${expectedNetBalance}).`);
       return;
     }
 
     try {
-      // Formatted precisely to match Django's CheckOut model requirements
       const payload = {
         checkin: selectedRecord.id,
         checkout_date: checkoutDate,
-        checkout_time: checkoutTime.length === 5 ? `${checkoutTime}:00` : checkoutTime, // Ensure HH:MM:SS format
+        checkout_time: checkoutTime.length === 5 ? `${checkoutTime}:00` : checkoutTime,
         total_days: billingCalculations.totalDays,
-        balance_paid: enteredAmount.toFixed(2), // Passing validated amount paid
-        discount_amount: currentDiscount.toFixed(2), // Optional: Sent if your backend captures itemized discount reductions
+        balance_paid: enteredAmount.toFixed(2),
+        discount_amount: currentDiscount.toFixed(2),
         pay_mode: payMode,
         remarks: remarks,
       };
@@ -182,52 +200,132 @@ export default function GuestCheckout() {
   return (
     <div className="min-h-screen bg-[#020b2d] p-8 text-white">
       {!selectedRecord ? (
-        /* SCREEN A: ACTIVE CHECK-INS DASHBOARD */
-        <div className="max-w-6xl mx-auto bg-[#0d1735] p-6 rounded-2xl border border-blue-900">
-          <h2 className="text-2xl font-bold mb-6 flex items-center gap-2 text-blue-400">
-            <Users /> Active Guest Profiles (Sorted by Room No)
-          </h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="text-gray-400 text-xs uppercase border-b border-blue-900 bg-slate-900/40">
-                  <th className="p-4">Room No</th>
-                  <th className="p-4">Guest Name</th>
-                  <th className="p-4">Mobile No</th>
-                  <th className="p-4">Check-In Date/Time</th>
-                  <th className="p-4 text-center">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-blue-900/30 text-sm">
-                {sortedCheckins.length > 0 ? (
-                  sortedCheckins.map((item) => (
-                    <tr key={item.id} className="hover:bg-blue-900/20 transition-colors">
-                      <td className="p-4 text-blue-400 font-bold text-lg">Room {item.room_no}</td>
-                      <td className="p-4 font-semibold">{item.customer_name}</td>
-                      <td className="p-4 tracking-wider text-gray-300">{item.mobile_no}</td>
-                      <td className="p-4 text-slate-300">
-                        {item.checkin_date} @ {item.checkin_time}
-                      </td>
-                      <td className="p-4 text-center">
-                        <button
-                          onClick={() => handleOpenCheckout(item)}
-                          className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2 rounded-xl text-xs transition shadow-md shadow-emerald-950"
-                        >
-                          CHECKOUT
-                        </button>
+        /* SCREEN A: ACTIVE DASHBOARD WITH CHECKOUT HISTORY LIST UNDERNEATH */
+        <div className="max-w-6xl mx-auto space-y-8">
+          
+          {/* Active Guest Profiles Container */}
+          <div className="bg-[#0d1735] p-6 rounded-2xl border border-blue-900">
+            <h2 className="text-2xl font-bold mb-6 flex items-center gap-2 text-blue-400">
+              <Users /> Active Guest Profiles (Sorted by Room No)
+            </h2>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="text-gray-400 text-xs uppercase border-b border-blue-900 bg-slate-900/40">
+                    <th className="p-4">Room No</th>
+                    <th className="p-4">Guest Name</th>
+                    <th className="p-4">Mobile No</th>
+                    <th className="p-4">Check-In Date/Time</th>
+                    <th className="p-4">Status</th>
+                    <th className="p-4 text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-blue-900/30 text-sm">
+                  {sortedCheckins.length > 0 ? (
+                    sortedCheckins.map((item) => (
+                      <tr key={item.id} className="hover:bg-blue-900/20 transition-colors">
+                        <td className="p-4 text-blue-400 font-bold text-lg">Room {item.room_no}</td>
+                        <td className="p-4 font-semibold">{item.customer_name}</td>
+                        <td className="p-4 tracking-wider text-gray-300">{item.mobile_no}</td>
+                        <td className="p-4 text-slate-300">
+                          {item.checkin_date} @ {item.checkin_time}
+                        </td>
+                        <td className="p-4">
+                          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                            {item.status || "STAYING"}
+                          </span>
+                        </td>
+                        <td className="p-4 text-center">
+                          <button
+                            onClick={() => handleOpenCheckout(item)}
+                            className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2 rounded-xl text-xs transition shadow-md shadow-emerald-950"
+                          >
+                            CHECKOUT
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={6} className="py-12 text-center text-gray-500 text-base">
+                        No active check-ins currently logged.
                       </td>
                     </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={5} className="py-12 text-center text-gray-500 text-base">
-                      No active check-ins currently logged.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
+
+          {/* NEW SECTION: HISTORICAL CHECKOUTS LIST FROM BACKEND */}
+          <div className="bg-[#0d1735] p-6 rounded-2xl border border-blue-900">
+            <h2 className="text-2xl font-bold mb-6 flex items-center gap-2 text-emerald-400">
+              <History /> Checkout Log & History
+            </h2>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="text-gray-400 text-xs uppercase border-b border-blue-900 bg-slate-900/40">
+                    <th className="p-4">Room No</th>
+                    <th className="p-4">Guest Details</th>
+                    <th className="p-4">Checkout Date/Time</th>
+                    <th className="p-4">Duration</th>
+                    <th className="p-4">Settled Amount</th>
+                    <th className="p-4">Pay Mode</th>
+                    <th className="p-4 text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-blue-900/30 text-sm">
+                  {checkouts.length > 0 ? (
+                    checkouts.map((out) => {
+                      // Safe nested mapping if backend serializes the complete checkin record nested style
+                      const nestedCheckin = typeof out.checkin === "object" ? out.checkin : null;
+                      const displayRoom = nestedCheckin?.room_no || out.room_no || "N/A";
+                      const displayName = nestedCheckin?.customer_name || out.customer_name || "Archived Guest";
+
+                      return (
+                        <tr key={out.id} className="hover:bg-slate-900/30 transition-colors">
+                          <td className="p-4 font-bold text-gray-300">Room {displayRoom}</td>
+                          <td className="p-4">
+                            <div className="font-medium">{displayName}</div>
+                            {nestedCheckin?.mobile_no && (
+                              <div className="text-xs text-gray-400 font-mono">{nestedCheckin.mobile_no}</div>
+                            )}
+                          </td>
+                          <td className="p-4 text-slate-300">
+                            {out.checkout_date} @ {out.checkout_time}
+                          </td>
+                          <td className="p-4 font-medium text-yellow-500">
+                            {out.total_days} Day(s)
+                          </td>
+                          <td className="p-4 text-emerald-400 font-bold font-mono">
+                            ₹{Number(out.balance_paid).toFixed(2)}
+                          </td>
+                          <td className="p-4">
+                            <span className="text-xs bg-slate-800 px-2 py-1 rounded text-gray-300 border border-slate-700">
+                              {out.pay_mode}
+                            </span>
+                          </td>
+                          <td className="p-4 text-center">
+                            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                              <CheckCircle2 size={12} /> CHECKED_OUT
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={7} className="py-12 text-center text-gray-500 text-base">
+                        No previous checkout records found.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
         </div>
       ) : (
         /* SCREEN B: ADD CHECKOUT SCREEN */
@@ -361,7 +459,6 @@ export default function GuestCheckout() {
                   </select>
                 </div>
 
-                {/* Added Discount Field */}
                 <div>
                   <label className="text-xs text-yellow-400 block mb-1.5">
                     <Percent size={12} className="inline mr-1" /> DISCOUNT (₹)
@@ -377,7 +474,6 @@ export default function GuestCheckout() {
                   />
                 </div>
 
-                {/* Amount Paid Field automatically subtracting discount */}
                 <div>
                   <label className="text-xs text-emerald-400 block mb-1.5">
                     <Banknote size={12} className="inline mr-1" /> AMOUNT PAID (₹)
