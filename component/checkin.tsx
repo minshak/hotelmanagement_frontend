@@ -1,471 +1,473 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import api from "../lib/api";
-import { Bed, X, Check, Users, Search, AlertCircle } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import api, {
+  getCustomers,
+  getRooms,
+  getRoomTypes,
+  getCheckIns,
+  Customer,
+  Room,
+  RoomType,
+} from "../lib/api"; // Adjust path dynamically based on your folder structure
 
-interface Customer {
+export interface CheckIn {
   id: number;
-  customer_name: string;
-  mobile_no: string;
-  email?: string;
-  address?: string;
-}
-
-interface Room {
-  id: number;
-  number: string;
-  type: string;
-  status: string;
-  rent: number;
-}
-
-interface CheckInRecord {
-  id: number;
+  room: number;
+  customer: number;
 
   customer_name?: string;
   mobile_no?: string;
   room_no?: string;
 
-  checkin_date?: string;
-  checkin_time?: string;
+  checkin_date: string;
+  checkin_time: string;
 
-  pay_mode?: string;
+  // Aligned fields with backend models.py
+  base_daily_rent: string;
+  advance_paid: string;
+  advance_amount: string;
+  pending_amount: string;
+  total_amount: string;
 
-  advance_amount?: number;
-  pending_amount?: number;
+  pay_mode: "CASH" | "CARD" | "UPI" | "NET_BANKING";
+  status: "CHECKED_IN" | "CHECKED_OUT" | "CANCELLED";
+
+  remarks?: string | null;
+  created_at: string;
 }
-export default function GuestCheckIn() {
+
+export default function GuestCheckInPage() {
+  // Client-side Hydration Flag
+  const [isMounted, setIsMounted] = useState(false);
+
+  // States for API datasets
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
-  const [checkins, setCheckins] = useState<CheckInRecord[]>([]);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  
-  // Selection States
+  const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
+  const [checkInsList, setCheckInsList] = useState<CheckIn[]>([]);
+
+  // Search & Selector states
+  const [searchTerm, setSearchTerm] = useState("");
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
-  const [roomTypeModal, setRoomTypeModal] = useState<string | null>(null);
-  const [customerSearch, setCustomerSearch] = useState("");
+  const [selectedRoomType, setSelectedRoomType] = useState<RoomType | null>(null);
+  const [availableRoomsFiltered, setAvailableRoomsFiltered] = useState<Room[]>([]);
+  const [selectedRoomId, setSelectedRoomId] = useState<string>("");
 
-  // Form State
-  const [formData, setFormData] = useState({
-    checkInDate: new Date().toISOString().split("T")[0],
-    checkInTime: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
-    advancePaid: 0,
-    payMode: "CASH",
-  });
+  // Controlled Forms
+  const [checkinDate, setCheckinDate] = useState("");
+  const [checkinTime, setCheckinTime] = useState("");
+  const [advanceAmount, setAdvanceAmount] = useState<number>(0);
+  const [payMode, setPayMode] = useState("CASH");
+  const [remarks, setRemarks] = useState("");
 
-  // Fetch Check-ins safely with structural fallbacks
-  const fetchCheckins = async () => {
-    try {
-      const response = await api.get("/reservations/checkins/").catch(() => 
-        api.get("/api/reservations/checkins/")
-      );
-      setCheckins(response.data || []);
-    } catch (error) {
-      console.error("Error fetching checkins:", error);
-    }
-  };
+  // UX Feedback States
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
+  // Ensure execution occurs purely in the client layer
   useEffect(() => {
-    const fetchData = async () => {
-      setErrorMessage(null);
-      
-      // Fetch Customers with standard routing fallbacks
-      try {
-        const customerRes = await api.get("/api/master/customers/")
-          .catch(() => api.get("/master/customers/"))
-          .catch(() => api.get("/api/customers/"));
-        setCustomers(customerRes.data || []);
-      } catch (e) {
-        console.error("Error fetching customers master:", e);
-        setErrorMessage("Customers route missing or matching endpoint path layout broken on backend.");
-      }
+    setIsMounted(true);
 
-      // Fetch Rooms context
-      try {
-        const savedRooms = localStorage.getItem("hotel_management_rooms");
-        if (savedRooms) {
-          setRooms(JSON.parse(savedRooms));
-        } else {
-          const roomRes = await api.get("/api/master/room-types/")
-            .catch(() => api.get("/master/rooms/"))
-            .catch(() => api.get("/api/rooms/"));
-          setRooms(roomRes.data || []);
-        }
-      } catch (roomErr) {
-        console.error("Error reading room dataset:", roomErr);
-      }
-
-      await fetchCheckins();
-    };
-
-    fetchData();
+    const now = new Date();
+    const formattedDate = now.toISOString().split("T")[0]; 
+    const formattedTime = now.toTimeString().split(" ")[0].substring(0, 5);
+    setCheckinDate(formattedDate);
+    setCheckinTime(formattedTime);
   }, []);
 
-  // Filtered customer list based on search term
-  const filteredCustomers = useMemo(() => {
-    if (!Array.isArray(customers)) return [];
-    return customers.filter(
-      (c) =>
-        c?.customer_name?.toLowerCase().includes(customerSearch.toLowerCase()) ||
-        c?.mobile_no?.includes(customerSearch)
-    );
-  }, [customers, customerSearch]);
+  // Safe data synchronization pipeline
+  useEffect(() => {
+    if (!isMounted) return;
 
-  // Unique Room types extracted from available room pool
-  const roomTypes = useMemo(() => {
-    if (!Array.isArray(rooms)) return [];
-    return Array.from(new Set(rooms.map((r) => r.type)));
-  }, [rooms]);
+    async function fetchData() {
+      const token = typeof window !== "undefined" ? localStorage.getItem("access") : null;
+      if (!token) {
+        setError("Authentication credentials not found. Please log in first.");
+        return;
+      }
 
-  // Derived Values
-  const roomRent = selectedRoom ? Number(selectedRoom.rent) : 0;
-  const pendingAmount = roomRent - formData.advancePaid;
+      try {
+        const [custData, roomData, typeData, checkInData] = await Promise.all([
+          getCustomers().catch(() => [] as Customer[]),
+          getRooms().catch(() => [] as Room[]),
+          getRoomTypes().catch(() => [] as RoomType[]),
+          getCheckIns().catch(() => [] as CheckIn[]),
+        ]);
 
-  const handleCompleteCheckIn = async () => {
-    if (!selectedCustomer || !selectedRoom) {
-      alert("Please select both a customer and a room.");
+        // Filter active check-ins to view on dashboard matching backend default filtering
+        const activeCheckIns = checkInData.filter((item) => item.status === "CHECKED_IN");
+
+        // Filter rooms layer: Rely exclusively on room status matching backend design rule
+        const onlyAvailableRooms = roomData.filter((room) => room.status === "AVAILABLE");
+
+        setCustomers(custData);
+        setRooms(onlyAvailableRooms);
+        setRoomTypes(typeData);
+        setCheckInsList(activeCheckIns);
+      } catch (err) {
+        console.error("Critical error mapping API entities:", err);
+        setError("Failed to synchronize component state with backend instances.");
+      }
+    }
+
+    fetchData();
+  }, [isMounted]);
+
+  // Compute room filterings safely when Room Types shift
+  useEffect(() => {
+    if (selectedRoomType) {
+      const filtered = rooms.filter(
+        (room) => room.room_type === selectedRoomType.id && room.status === "AVAILABLE"
+      );
+      setAvailableRoomsFiltered(filtered);
+      setSelectedRoomId(""); 
+    } else {
+      setAvailableRoomsFiltered([]);
+    }
+  }, [selectedRoomType, rooms]);
+
+  // Dynamic Financial Mappings aligned with backend structure
+  const roomRent = selectedRoomType ? parseFloat(selectedRoomType.rent) : 0;
+  const pendingBalance = Math.max(0, roomRent - advanceAmount);
+
+  const filteredCustomers = customers.filter(
+    (cust) =>
+      cust.customer_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      cust.mobile_no?.includes(searchTerm)
+  );
+
+  // Submit operations handler
+  const handleCompleteCheckIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+
+    if (!selectedCustomer || !selectedRoomId || !selectedRoomType) {
+      setError("Please ensure valid Customer, Room Type, and Room configuration rules are met.");
       return;
     }
 
-    try {
-      const payload = {
-        customer: selectedCustomer.id,
-        room: selectedRoom.id,
-        checkin_date: formData.checkInDate,
-        checkin_time: formData.checkInTime,
-        advance_amount: formData.advancePaid,
-        pending_amount: pendingAmount,
-        pay_mode: formData.payMode,
-      };
+    setLoading(true);
 
-      await api.post("/reservations/checkins/", payload).catch(() => 
-        api.post("/api/reservations/checkins/", payload)
-      );
+    // Form payload properties matched completely with fields explicitly expected by CheckIn model
+    const payload = {
+      customer: selectedCustomer.id,
+      room: parseInt(selectedRoomId),
+      checkin_date: checkinDate,
+      checkin_time: `${checkinTime}:00`, 
+      base_daily_rent: roomRent.toFixed(2),
+      advance_paid: advanceAmount.toFixed(2),     // Mirror backend naming flexibility
+      advance_amount: advanceAmount.toFixed(2),   // Mirror backend naming flexibility
+      pending_amount: pendingBalance.toFixed(2),
+      total_amount: roomRent.toFixed(2),          // Base check-in calculation standard
+      pay_mode: payMode,
+      remarks: remarks || null,
+      status: "CHECKED_IN"
+    };
+
+    try {
+      await api.post("/reservations/checkins/", payload);
+
+      // Refresh component dashboard arrays immediately
+      const updatedCheckins = await getCheckIns();
+      const rawRooms = await getRooms();
       
-      alert("Check-in Successful!");
-      
+      const activeCheckIns = updatedCheckins.filter((item) => item.status === "CHECKED_IN");
+      const updatedAvailableRooms = rawRooms.filter((room) => room.status === "AVAILABLE");
+
+      setCheckInsList(activeCheckIns);
+      setRooms(updatedAvailableRooms);
+
+      // Flash forms reset
       setSelectedCustomer(null);
-      setSelectedRoom(null);
-      setFormData((prev) => ({
-        ...prev,
-        advancePaid: 0,
-        checkInDate: new Date().toISOString().split("T")[0],
-        checkInTime: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })
-      }));
-      setCustomerSearch("");
-      
-      await fetchCheckins();
-    } catch (error) {
-      console.error("POST Submission Error:", error);
-      alert("Failed to register dynamic checkin payload execution.");
+      setSelectedRoomType(null);
+      setAdvanceAmount(0);
+      setSearchTerm("");
+      setRemarks("");
+      alert("Guest Check-In registration updated successfully!");
+    } catch (err: any) {
+      const backendError = err.response?.data 
+        ? JSON.stringify(err.response.data) 
+        : "Failed to dispatch post payload mapping.";
+      setError(backendError);
+    } finally {
+      setLoading(false);
     }
   };
 
-  return (
-    <div className="min-h-screen bg-[#020b2d] p-8 text-white">
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-bold">Guest Check-In</h1>
-        {errorMessage && (
-          <div className="bg-red-900/30 text-red-400 border border-red-500/30 px-4 py-2 rounded-lg text-xs flex items-center gap-2">
-            <AlertCircle className="w-4 h-4" /> {errorMessage}
-          </div>
-        )}
+  if (!isMounted) {
+    return (
+      <div className="min-h-screen bg-[#070b19] flex items-center justify-center text-slate-400">
+        Syncing system instance context...
       </div>
+    );
+  }
 
-      <div className="grid lg:grid-cols-2 gap-8">
-        {/* COLUMN 1: INTERACTIVE CUSTOMER SEARCH & ROOM TYPE */}
+  return (
+    <div className="min-h-screen bg-[#070b19] text-white p-6 font-sans">
+      <h1 className="text-3xl font-bold mb-6">Guest Check-In</h1>
+
+      {error && (
+        <div className="bg-red-900/40 border border-red-500/50 text-red-200 p-3 rounded-md mb-6 text-sm break-words">
+          {error}
+        </div>
+      )}
+
+      {/* Grid wrapper layout component */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        
+        {/* Left Interactive panel parameters */}
         <div className="space-y-6">
-          <div className="bg-[#0d1735] p-5 rounded-xl border border-blue-900 flex flex-col h-[380px]">
-            <label className="text-xs text-gray-400 block mb-2 tracking-wider font-semibold">
-              SELECT CUSTOMER & VIEW DETAILS
-            </label>
-            
+          
+          {/* Box Module: Target Guest Search */}
+          <div className="bg-[#0e162d] border border-slate-800 rounded-lg p-5">
+            <h2 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-3">
+              Select Customer & View Details
+            </h2>
             <div className="relative mb-3">
-              <Search className="absolute left-3 top-3.5 text-gray-400 w-4 h-4" />
               <input
                 type="text"
                 placeholder="Search by name or mobile number..."
-                value={customerSearch}
-                onChange={(e) => setCustomerSearch(e.target.value)}
-                className="w-full bg-slate-900 pl-10 pr-4 py-2.5 rounded text-white border border-slate-700 focus:outline-none focus:border-blue-500 text-sm"
+                className="w-full bg-[#070b19] border border-slate-700 rounded px-4 py-2 text-sm focus:outline-none focus:border-blue-500 transition-all text-white"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1 bg-[#0a1024] p-2 rounded border border-blue-950">
-              {filteredCustomers.length > 0 ? (
-                filteredCustomers.map((c) => {
-                  const isSelected = selectedCustomer?.id === c.id;
-                  return (
-                    <div
-                      key={c.id}
-                      onClick={() => setSelectedCustomer(c)}
-                      className={`p-3 rounded-lg cursor-pointer border transition text-sm flex justify-between items-center ${
-                        isSelected
-                          ? "bg-blue-600/30 border-blue-500"
-                          : "bg-slate-900/60 border-slate-800 hover:border-slate-700"
-                      }`}
-                    >
-                      <div>
-                        <p className="font-bold text-white">{c.customer_name}</p>
-                        <p className="text-xs text-gray-400">Mob: {c.mobile_no} | {c.email || "No Email"}</p>
-                        {isSelected && (
-                          <p className="text-[11px] text-gray-300 italic mt-1">Add: {c.address || "N/A"}</p>
-                        )}
-                      </div>
-                      {isSelected && <Check className="text-blue-400 w-5 h-5 flex-shrink-0" />}
-                    </div>
-                  );
-                })
-              ) : (
-                <p className="text-center text-sm text-gray-500 pt-8">No matching customers found.</p>
+            <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+              {filteredCustomers.slice(0, 5).map((cust) => (
+                <div
+                  key={cust.id}
+                  onClick={() => setSelectedCustomer(cust)}
+                  className={`p-3 rounded border transition-all cursor-pointer ${
+                    selectedCustomer?.id === cust.id
+                      ? "bg-blue-600/20 border-blue-500"
+                      : "bg-[#070b19] border-slate-800/80 hover:border-slate-700"
+                  }`}
+                >
+                  <p className="font-bold text-sm capitalize">{cust.customer_name}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Mob: {cust.mobile_no} {cust.email ? `| ${cust.email}` : ""}
+                  </p>
+                </div>
+              ))}
+              {filteredCustomers.length === 0 && searchTerm && (
+                <p className="text-xs text-slate-500 p-2">No matching customers found.</p>
               )}
             </div>
           </div>
 
-          <div>
-            <label className="text-xs text-gray-400 block mb-2 tracking-wider font-semibold">
-              SELECT ROOM TYPE
-            </label>
-            <div className="grid grid-cols-2 gap-3">
+          {/* Box Module: Structural Room Selection categorization rules */}
+          <div className="bg-[#0e162d] border border-slate-800 rounded-lg p-5">
+            <h2 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-4">
+              Select Room Type
+            </h2>
+            <div className="grid grid-cols-3 gap-3">
               {roomTypes.map((type) => (
                 <button
-                  key={type}
+                  key={type.id}
                   type="button"
-                  onClick={() => setRoomTypeModal(type)}
-                  className="bg-blue-900/20 hover:bg-blue-600/40 p-4 rounded-xl border border-blue-500/30 text-center transition"
+                  onClick={() => setSelectedRoomType(type)}
+                  className={`flex flex-col items-center justify-center p-4 rounded-lg border transition-all ${
+                    selectedRoomType?.id === type.id
+                      ? "bg-blue-600/20 border-blue-500 text-blue-400"
+                      : "bg-[#070b19] border-slate-800 text-slate-300 hover:border-slate-700"
+                  }`}
                 >
-                  <Bed className="mx-auto mb-2 text-blue-400" />
-                  <div className="font-bold">{type}</div>
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                  </svg>
+                  <span className="text-sm font-semibold capitalize">{type.category}</span>
                 </button>
               ))}
             </div>
           </div>
         </div>
 
-        {/* COLUMN 2: CHECKIN DETAILS & FINANCIALS */}
-        <div className="bg-[#0b1224] p-6 rounded-2xl border border-slate-800 space-y-5 flex flex-col justify-between">
-          <div className="space-y-4">
-            <h3 className="text-md font-semibold text-blue-400 border-b border-blue-950 pb-2">Check-in Execution List</h3>
-
-            <div className="grid grid-cols-2 gap-4">
+        {/* Right Active Dynamic execution Form configuration maps */}
+        <form onSubmit={handleCompleteCheckIn} className="bg-[#0e162d] border border-slate-800 rounded-lg p-5 flex flex-col justify-between">
+          <div>
+            <h2 className="text-blue-500 font-semibold text-base mb-4">Check-in Execution List</h2>
+            
+            <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
-                <label className="text-[11px] text-gray-400 block mb-1">GUEST NAME</label>
+                <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">Guest Name</label>
                 <input
                   type="text"
-                  readOnly
+                  disabled
                   placeholder="Auto-filled"
                   value={selectedCustomer ? selectedCustomer.customer_name : ""}
-                  className="w-full bg-slate-900/50 p-3 rounded text-sm border border-slate-800 text-gray-300 focus:outline-none cursor-not-allowed"
+                  className="w-full bg-[#070b19] border border-slate-800 rounded px-3 py-2 text-sm text-slate-300 capitalize disabled:opacity-70"
                 />
               </div>
               <div>
-                <label className="text-[11px] text-gray-400 block mb-1">MOBILE NO</label>
+                <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">Mobile No</label>
                 <input
                   type="text"
-                  readOnly
+                  disabled
                   placeholder="Auto-filled"
                   value={selectedCustomer ? selectedCustomer.mobile_no : ""}
-                  className="w-full bg-slate-900/50 p-3 rounded text-sm border border-slate-800 text-gray-300 focus:outline-none cursor-not-allowed"
+                  className="w-full bg-[#070b19] border border-slate-800 rounded px-3 py-2 text-sm text-slate-300 disabled:opacity-70"
                 />
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
-                <label className="text-[11px] text-gray-400 block mb-1">SELECTED ROOM NO</label>
-                <input
-                  type="text"
-                  readOnly
-                  placeholder="Auto-filled"
-                  value={selectedRoom ? `Room ${selectedRoom.number}` : ""}
-                  className="w-full bg-slate-900/50 p-3 rounded text-sm border border-slate-800 font-bold text-blue-400 focus:outline-none cursor-not-allowed"
-                />
+                <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">Select Room No</label>
+                <select
+                  required
+                  value={selectedRoomId}
+                  onChange={(e) => setSelectedRoomId(e.target.value)}
+                  disabled={!selectedRoomType}
+                  className="w-full bg-[#070b19] border border-slate-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">{selectedRoomType ? "-- Select Room --" : "Choose room type first"}</option>
+                  {availableRoomsFiltered.map((room) => (
+                    <option key={room.id} value={room.id}>
+                      Room {room.room_no}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
-                <label className="text-[11px] text-gray-400 block mb-1">ROOM RENT (₹)</label>
+                <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">Room Rent (₹)</label>
                 <input
                   type="text"
-                  readOnly
+                  disabled
                   placeholder="Auto-filled"
-                  value={selectedRoom ? selectedRoom.rent : ""}
-                  className="w-full bg-slate-900/50 p-3 rounded text-sm border border-slate-800 text-emerald-400 font-semibold focus:outline-none cursor-not-allowed"
+                  value={selectedRoomType ? `₹${selectedRoomType.rent}` : ""}
+                  className="w-full bg-[#070b19] border border-slate-800 rounded px-3 py-2 text-sm font-medium text-emerald-400 disabled:opacity-70"
                 />
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
-                <label className="text-[11px] text-gray-400 block mb-1">CHECK-IN DATE</label>
+                <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">Check-In Date</label>
                 <input
                   type="date"
-                  value={formData.checkInDate}
-                  className="w-full bg-slate-900 p-3 rounded text-sm border border-slate-800 text-white"
-                  onChange={(e) => setFormData({ ...formData, checkInDate: e.target.value })}
+                  value={checkinDate}
+                  onChange={(e) => setCheckinDate(e.target.value)}
+                  className="w-full bg-[#070b19] border border-slate-700 rounded px-3 py-2 text-sm text-white focus:outline-none"
                 />
               </div>
               <div>
-                <label className="text-[11px] text-gray-400 block mb-1">CHECK-IN TIME</label>
+                <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">Check-In Time</label>
                 <input
                   type="time"
-                  value={formData.checkInTime}
-                  className="w-full bg-slate-900 p-3 rounded text-sm border border-slate-800 text-white"
-                  onChange={(e) => setFormData({ ...formData, checkInTime: e.target.value })}
+                  value={checkinTime}
+                  onChange={(e) => setCheckinTime(e.target.value)}
+                  className="w-full bg-[#070b19] border border-slate-700 rounded px-3 py-2 text-sm text-white focus:outline-none"
                 />
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4 items-end">
+            <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
-                <label className="text-[11px] text-gray-400 block mb-1">ADVANCE AMOUNT PAID (₹)</label>
+                <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">Advance Amount Paid (₹)</label>
                 <input
                   type="number"
-                  placeholder="0.00"
-                  value={formData.advancePaid || ""}
-                  className="w-full bg-slate-900 p-3 rounded text-sm border border-slate-700"
-                  onChange={(e) => setFormData({ ...formData, advancePaid: Number(e.target.value) })}
+                  step="0.01"
+                  value={advanceAmount || ""}
+                  onChange={(e) => setAdvanceAmount(parseFloat(e.target.value) || 0)}
+                  className="w-full bg-[#070b19] border border-slate-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
                 />
               </div>
               <div>
-                <label className="text-[11px] text-gray-400 block mb-1">PAYMENT MODE</label>
+                <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">Payment Mode</label>
                 <select
-                  className="w-full bg-slate-900 p-3 rounded text-sm border border-slate-700 text-white"
-                  value={formData.payMode}
-                  onChange={(e) => setFormData({ ...formData, payMode: e.target.value })}
+                  value={payMode}
+                  onChange={(e) => setPayMode(e.target.value)}
+                  className="w-full bg-[#070b19] border border-slate-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
                 >
                   <option value="CASH">Cash</option>
+                  <option value="CARD">Card</option>
                   <option value="UPI">UPI</option>
-                  <option value="CARD">Card/Net Banking</option>
+                  <option value="NET_BANKING">Net Banking</option>
                 </select>
               </div>
             </div>
+
+            <div className="mb-4">
+              <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">Remarks</label>
+              <textarea
+                value={remarks}
+                onChange={(e) => setRemarks(e.target.value)}
+                placeholder="Add special instructions, requirements etc..."
+                rows={2}
+                className="w-full bg-[#070b19] border border-slate-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 resize-none"
+              />
+            </div>
           </div>
 
-          <div className="pt-4 border-t border-blue-950 space-y-3">
-            <div className="flex justify-between items-center">
-              <span className="text-gray-400 text-sm">Remaining Pending Balance:</span>
-              <span className={`text-xl font-bold ${pendingAmount > 0 ? "text-red-400" : "text-emerald-400"}`}>
-                ₹{pendingAmount.toFixed(2)}
-              </span>
+          <div className="border-t border-slate-800 pt-4 mt-4">
+            <div className="flex justify-between items-center mb-4">
+              <span className="text-sm text-slate-400">Remaining Pending Balance:</span>
+              <span className="text-xl font-bold text-emerald-400">₹{pendingBalance.toFixed(2)}</span>
             </div>
-
             <button
-              onClick={handleCompleteCheckIn}
-              disabled={!selectedCustomer || !selectedRoom}
-              className="w-full bg-blue-600 py-3.5 rounded-xl font-bold hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              type="submit"
+              disabled={loading}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-md transition-colors uppercase text-sm tracking-wider disabled:opacity-50"
             >
-              COMPLETE CHECK-IN
+              {loading ? "Processing..." : "Complete Check-In"}
             </button>
           </div>
-        </div>
+        </form>
       </div>
 
-      {/* ACTIVE CHECK-INS DASHBOARD */}
-      <div className="mt-12 bg-[#0d1735] p-6 rounded-2xl border border-blue-900">
-        <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
-          <Users className="text-blue-400" /> Active Check-ins Dashboard
-        </h2>
+      {/* Active Dashboard Panel */}
+      <div className="bg-[#0e162d] border border-slate-800 rounded-lg p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656 it.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+          </svg>
+          <h2 className="text-lg font-semibold">Active Check-ins Dashboard</h2>
+        </div>
+
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-             <tr className="text-gray-400 text-xs uppercase border-b border-blue-900">
-             <th className="pb-4">Guest</th>
-             <th className="pb-4">Mobile</th>
-             <th className="pb-4">Room No</th>
-             <th className="pb-4">Check-In Info</th>
-             <th className="pb-4">Advance Paid</th>
-             <th className="pb-4">Pay Mode</th>
-             <th className="pb-4">Pending Due</th>
-         </tr>
-         </thead>
-         <tbody className="divide-y divide-blue-900/30 text-sm">
-            {checkins.length > 0 ? (
-            checkins.map((item) => (
-        <tr key={item.id} className="hover:bg-blue-900/10">
-
-        <td className="py-4 font-semibold">
-                {item.customer_name}
-        </td>
-
-        <td className="py-4">
-          {item.mobile_no}
-        </td>
-
-        <td className="py-4 text-blue-400 font-bold">
-          Room {item.room_no}
-        </td>
-
-        <td className="py-4">
-          {item.checkin_date} @ {item.checkin_time}
-        </td>
-
-        <td className="py-4 text-green-400 font-bold">
-          ₹{item.advance_amount}
-        </td>
-
-        <td className="py-4">
-          <span className="px-2 py-1 bg-slate-800 rounded text-xs">
-            {item.pay_mode}
-          </span>
-        </td>
-
-        <td className="py-4 text-red-400 font-bold">
-          ₹{item.pending_amount}
-        </td>
-
-      </tr>
-    ))
-  ) : (
-    <tr>
-      <td colSpan={7} className="py-8 text-center text-gray-500">
-        No Active Check-ins
-      </td>
-    </tr>
-  )}
-</tbody>
+          <table className="w-full text-left text-sm text-slate-300">
+            <thead className="text-xs uppercase bg-[#070b19] text-slate-400 border-b border-slate-800">
+              <tr>
+                <th className="px-4 py-3">Guest</th>
+                <th className="px-4 py-3">Mobile</th>
+                <th className="px-4 py-3">Room No</th>
+                <th className="px-4 py-3">Check-In Info</th>
+                <th className="px-4 py-3">Advance Paid</th>
+                <th className="px-4 py-3">Pending Amount</th>
+                <th className="px-4 py-3">Pay Mode</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800">
+              {checkInsList.map((item) => (
+                <tr key={item.id} className="hover:bg-slate-800/30">
+                  <td className="px-4 py-3 font-semibold capitalize">{item.customer_name || `Customer ID: ${item.customer}`}</td>
+                  <td className="px-4 py-3 text-slate-400">{item.mobile_no || "N/A"}</td>
+                  <td className="px-4 py-3 text-blue-400 font-medium">Room {item.room_no || item.room}</td>
+                  <td className="px-4 py-3 text-slate-400">
+                    {item.checkin_date} @ {item.checkin_time}
+                  </td>
+                  <td className="px-4 py-3 text-emerald-400 font-medium">₹{item.advance_amount || item.advance_paid}</td>
+                  <td className="px-4 py-3 text-amber-500 font-medium">₹{item.pending_amount}</td>
+                  <td className="px-4 py-3">
+                    <span className="bg-slate-800 text-xs text-slate-300 font-mono px-2 py-1 rounded border border-slate-700">
+                      {item.pay_mode}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {checkInsList.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="text-center py-6 text-slate-500">
+                    No active system check-in instances found.
+                  </td>
+                </tr>
+              )}
+            </tbody>
           </table>
         </div>
       </div>
-
-      {/* COMPACT ROOM SELECTION MODAL */}
-      {roomTypeModal && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
-          <div className="bg-[#0d1735] w-full max-w-sm rounded-2xl p-6 border border-slate-700 shadow-2xl">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="font-bold text-lg text-blue-400">Available {roomTypeModal}</h2>
-              <button onClick={() => setRoomTypeModal(null)} className="text-gray-400 hover:text-white">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            
-            <div className="grid grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-1">
-              {rooms.filter((r) => r.type === roomTypeModal && r.status?.toLowerCase() === "available").length > 0 ? (
-                rooms
-                  .filter((r) => r.type === roomTypeModal && r.status?.toLowerCase() === "available")
-                  .map((r) => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedRoom(r);
-                        setRoomTypeModal(null);
-                      }}
-                      className="p-4 bg-slate-900 hover:bg-blue-600 rounded-xl border border-slate-800 text-center transition"
-                    >
-                      <div className="font-bold text-xl text-white">{r.number}</div>
-                      <div className="text-xs text-emerald-400 mt-1">₹{r.rent}</div>
-                    </button>
-                  ))
-              ) : (
-                <div className="col-span-2 text-center text-sm text-gray-400 py-6">
-                  No vacant rooms available.
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

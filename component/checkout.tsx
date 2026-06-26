@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import api from "../lib/api";
-import { Users, Receipt, Calendar, Clock, CreditCard, ChevronLeft } from "lucide-react";
+import api, { getRooms, getRoomTypes } from "../lib/api";
+import { Users, Receipt, Calendar, Clock, CreditCard, ChevronLeft, Banknote, Percent } from "lucide-react";
 
 interface CheckInRecord {
   id: number;
@@ -15,48 +15,55 @@ interface CheckInRecord {
   pay_mode?: string;
 }
 
-// Updated Room interface to mirror your Room management architecture perfectly
 interface Room {
   id: number;
-  number: string;
-  type: string;
-  ac: boolean;
+  room_no: string;
+  room_type: number;
+  status: "AVAILABLE" | "OCCUPIED" | "MAINTENANCE";
+  active: boolean;
+}
+
+interface RoomType {
+  id: number;
+  name: string;
   rent: number;
-  status: 'available' | 'occupied' | 'maintenance';
 }
 
 export default function GuestCheckout() {
   const [checkins, setCheckins] = useState<CheckInRecord[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
+  const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
   const [selectedRecord, setSelectedRecord] = useState<CheckInRecord | null>(null);
 
   // Checkout Form State
-  const [checkoutDate, setCheckoutDate] = useState(new Date().toISOString().split("T")[0]);
-  const [checkoutTime, setCheckoutTime] = useState(
-    new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })
-  );
-  const [advancePaid, setAdvancePaid] = useState<number>(0);
+  const [checkoutDate, setCheckoutDate] = useState("");
+  const [checkoutTime, setCheckoutTime] = useState("");
   const [payMode, setPayMode] = useState("CASH");
-  const [reference, setReference] = useState("");
+  const [remarks, setRemarks] = useState("");
+  const [discount, setDiscount] = useState<string>("0"); // New discount state
+  const [amountPaid, setAmountPaid] = useState<string>(""); // Tracks net amount collected
+
+  // Initialize date & time on client side to prevent Next.js SSR hydration mismatches
+  useEffect(() => {
+    setCheckoutDate(new Date().toISOString().split("T")[0]);
+    setCheckoutTime(
+      new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })
+    );
+  }, []);
 
   // Synchronized Data Fetching pipeline
   const fetchInitialData = async () => {
     try {
-      const checkinRes = await api.get("/reservations/checkins/").catch(() => 
-        api.get("/api/reservations/checkins/")
-      );
+      const checkinRes = await api.get("/reservations/checkins/");
       setCheckins(checkinRes.data || []);
 
-      // Critical sync point: Prioritize fetching real-time values updated on your rooms engine dashboard
-      const savedRooms = localStorage.getItem("hotel_management_rooms");
-      if (savedRooms) {
-        setRooms(JSON.parse(savedRooms));
-      } else {
-        const roomRes = await api.get("/api/master/room-types/").catch(() => api.get("/api/rooms/"));
-        setRooms(roomRes.data || []);
-      }
+      const roomRes = await getRooms();
+      setRooms(roomRes || []);
+
+      const types = await getRoomTypes();
+      setRoomTypes(types || []);
     } catch (error) {
-      console.error("Error standardizing dashboard ingestion:", error);
+      console.error("Failed to fetch initial data:", error);
     }
   };
 
@@ -69,103 +76,113 @@ export default function GuestCheckout() {
     return [...checkins].sort((a, b) => {
       const roomA = a.room_no || "";
       const roomB = b.room_no || "";
-      return roomA.localeCompare(roomB, undefined, { numeric: true, sensitivity: 'base' });
+      return roomA.localeCompare(roomB, undefined, { numeric: true, sensitivity: "base" });
     });
   }, [checkins]);
 
-  // Handle clicking "Checkout" on a record
-  const handleOpenCheckout = (record: CheckInRecord) => {
-    setSelectedRecord(record);
-    setAdvancePaid(Number(record.advance_amount) || 0);
-    setCheckoutDate(new Date().toISOString().split("T")[0]);
-    setCheckoutTime(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }));
-    setPayMode(record.pay_mode || "CASH");
-    setReference("");
-  };
-
-  // Find Room daily rent dynamically matched against custom inputs from Rooms view
+  // Find Room daily rent dynamically cross-referenced through RoomType mappings
   const currentRoomRent = useMemo(() => {
     if (!selectedRecord) return 0;
-    // Cross-evaluates strings explicitly to counter typing issues ('1001' vs 1001)
-    const matchedRoom = rooms.find(r => String(r.number) === String(selectedRecord.room_no));
-    return matchedRoom ? Number(matchedRoom.rent) : 0;
-  }, [selectedRecord, rooms]);
 
-  // Comprehensive 22-Hour Grace Period Calculations 
+    const room = rooms.find((r) => String(r.room_no) === String(selectedRecord.room_no));
+    const roomType = roomTypes.find((t) => t.id === room?.room_type);
+
+    return roomType ? Number(roomType.rent) : 0;
+  }, [selectedRecord, rooms, roomTypes]);
+
+  // Aligned with backend calculation logic: max(1, ceil(hours / 24))
   const billingCalculations = useMemo(() => {
-    if (!selectedRecord || !selectedRecord.checkin_date || !selectedRecord.checkin_time) {
+    if (!selectedRecord || !selectedRecord.checkin_date || !selectedRecord.checkin_time || !checkoutDate || !checkoutTime) {
       return { totalDays: 0, totalAmount: 0, balanceAmount: 0 };
     }
 
-    // Parse Check-In and Checkout dates into native JavaScript Date Objects
     const checkInDateTime = new Date(`${selectedRecord.checkin_date}T${selectedRecord.checkin_time}`);
     const checkOutDateTime = new Date(`${checkoutDate}T${checkoutTime}`);
 
-    // Diff in milliseconds
     const diffInMs = checkOutDateTime.getTime() - checkInDateTime.getTime();
-    
+    const advancePaid = Number(selectedRecord.advance_amount) || 0;
+
     if (diffInMs <= 0) {
       return { totalDays: 1, totalAmount: currentRoomRent, balanceAmount: currentRoomRent - advancePaid };
     }
 
     const diffInHours = diffInMs / (1000 * 60 * 60);
-    const wholeDays = Math.floor(diffInHours / 24);
-    const remainingHours = diffInHours % 24;
-
-    // Core rule: If remaining hour components cross >= 22 hours, register an extra day cycle.
-    let calculatedDays = wholeDays;
-    if (wholeDays === 0 || remainingHours >= 22) {
-      calculatedDays += 1;
-    }
-
+    const calculatedDays = Math.max(1, Math.ceil(diffInHours / 24));
     const totalAmount = calculatedDays * currentRoomRent;
     const balanceAmount = totalAmount - advancePaid;
 
     return {
       totalDays: calculatedDays,
       totalAmount,
-      balanceAmount
+      balanceAmount,
     };
-  }, [selectedRecord, checkoutDate, checkoutTime, currentRoomRent, advancePaid]);
+  }, [selectedRecord, checkoutDate, checkoutTime, currentRoomRent]);
+
+  // Sync amountPaid value whenever the calculated balance or discount updates
+  useEffect(() => {
+    if (selectedRecord) {
+      const totalDiscount = parseFloat(discount) || 0;
+      const netPayable = Math.max(0, billingCalculations.balanceAmount - totalDiscount);
+      setAmountPaid(netPayable.toFixed(2));
+    }
+  }, [billingCalculations.balanceAmount, selectedRecord, discount]);
+
+  const handleOpenCheckout = (record: CheckInRecord) => {
+    setSelectedRecord(record);
+    setCheckoutDate(new Date().toISOString().split("T")[0]);
+    setCheckoutTime(
+      new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })
+    );
+    setPayMode(record.pay_mode || "CASH");
+    setDiscount("0");
+    setRemarks("");
+  };
 
   // Handle Form Submission
   const handleSaveCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedRecord) return;
 
+    const enteredAmount = parseFloat(amountPaid) || 0;
+    const currentDiscount = parseFloat(discount) || 0;
+    // Net target balance calculated after factoring out discounts
+    const expectedNetBalance = parseFloat((billingCalculations.balanceAmount - currentDiscount).toFixed(2));
+
+    // Strict Validation: Ensure user-entered amount matches the computed net balance due
+    if (enteredAmount !== expectedNetBalance) {
+      alert(`Payment Validation Error: The entered Amount Paid (₹${enteredAmount}) must exactly match the Balance Payable Due minus Discount (₹${expectedNetBalance}).`);
+      return;
+    }
+
     try {
+      // Formatted precisely to match Django's CheckOut model requirements
       const payload = {
-        checkin_id: selectedRecord.id,
-        room_no: selectedRecord.room_no,
-        customer_name: selectedRecord.customer_name,
+        checkin: selectedRecord.id,
         checkout_date: checkoutDate,
-        checkout_time: checkoutTime,
+        checkout_time: checkoutTime.length === 5 ? `${checkoutTime}:00` : checkoutTime, // Ensure HH:MM:SS format
         total_days: billingCalculations.totalDays,
-        total_amount: billingCalculations.totalAmount,
-        advance_paid: advancePaid,
-        balance_amount: billingCalculations.balanceAmount,
+        balance_paid: enteredAmount.toFixed(2), // Passing validated amount paid
+        discount_amount: currentDiscount.toFixed(2), // Optional: Sent if your backend captures itemized discount reductions
         pay_mode: payMode,
-        reference: reference
+        remarks: remarks,
       };
 
-      // Perform POST request to processing endpoint
-      await api.post("/reservations/checkouts/", payload).catch(() =>
-        api.post("/api/reservations/checkouts/", payload)
-      );
+      const checkoutEndpoint = "/reservations/checkouts/";
+      await api.post(checkoutEndpoint, payload);
 
-      alert("Checkout record saved successfully!");
+      alert("Checkout processed successfully!");
       setSelectedRecord(null);
-      await fetchInitialData(); // Refresh active view
+      await fetchInitialData();
     } catch (err) {
-      console.error("Checkout validation failure:", err);
-      alert("Failed to submit checkout pipeline logs to system database.");
+      console.error("Checkout submission failure:", err);
+      alert("Failed to submit checkout payload. Verify your API base path endpoint configuration.");
     }
   };
 
   return (
     <div className="min-h-screen bg-[#020b2d] p-8 text-white">
       {!selectedRecord ? (
-        /* SCREEN A: ACTIVE CHECK-INS DASHBOARD (SORTED BY ROOM NO) */
+        /* SCREEN A: ACTIVE CHECK-INS DASHBOARD */
         <div className="max-w-6xl mx-auto bg-[#0d1735] p-6 rounded-2xl border border-blue-900">
           <h2 className="text-2xl font-bold mb-6 flex items-center gap-2 text-blue-400">
             <Users /> Active Guest Profiles (Sorted by Room No)
@@ -185,9 +202,7 @@ export default function GuestCheckout() {
                 {sortedCheckins.length > 0 ? (
                   sortedCheckins.map((item) => (
                     <tr key={item.id} className="hover:bg-blue-900/20 transition-colors">
-                      <td className="p-4 text-blue-400 font-bold text-lg">
-                        Room {item.room_no}
-                      </td>
+                      <td className="p-4 text-blue-400 font-bold text-lg">Room {item.room_no}</td>
                       <td className="p-4 font-semibold">{item.customer_name}</td>
                       <td className="p-4 tracking-wider text-gray-300">{item.mobile_no}</td>
                       <td className="p-4 text-slate-300">
@@ -218,6 +233,7 @@ export default function GuestCheckout() {
         /* SCREEN B: ADD CHECKOUT SCREEN */
         <div className="max-w-4xl mx-auto space-y-6">
           <button
+            type="button"
             onClick={() => setSelectedRecord(null)}
             className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition"
           >
@@ -225,7 +241,7 @@ export default function GuestCheckout() {
           </button>
 
           <form onSubmit={handleSaveCheckout} className="space-y-6">
-            {/* 1. Header Metadata Panel */}
+            {/* Header Metadata Panel */}
             <div className="bg-gradient-to-r from-[#0a153a] to-[#060f2b] p-6 rounded-2xl border border-blue-500/30 shadow-xl">
               <h3 className="text-xs font-bold text-blue-400 tracking-widest uppercase mb-4 flex items-center gap-2">
                 <Receipt size={14} /> Registered Check-in Details
@@ -258,13 +274,15 @@ export default function GuestCheckout() {
               </div>
             </div>
 
-            {/* 2. Transaction Interactive Form Details */}
+            {/* Transaction Interactive Form Details */}
             <div className="bg-[#07102a] p-6 rounded-2xl border border-slate-800 space-y-6">
               <h3 className="text-base font-bold text-slate-200 border-b border-slate-800 pb-2">Checkout Operations</h3>
-              
+
               <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-4">
                 <div>
-                  <label className="text-xs text-gray-400 block mb-1.5"><Calendar size={12} className="inline mr-1" /> CHECKOUT DATE</label>
+                  <label className="text-xs text-gray-400 block mb-1.5">
+                    <Calendar size={12} className="inline mr-1" /> CHECKOUT DATE
+                  </label>
                   <input
                     type="date"
                     required
@@ -275,9 +293,12 @@ export default function GuestCheckout() {
                 </div>
 
                 <div>
-                  <label className="text-xs text-gray-400 block mb-1.5"><Clock size={12} className="inline mr-1" /> CHECKOUT TIME</label>
+                  <label className="text-xs text-gray-400 block mb-1.5">
+                    <Clock size={12} className="inline mr-1" /> CHECKOUT TIME
+                  </label>
                   <input
                     type="time"
+                    step="1"
                     required
                     value={checkoutTime}
                     onChange={(e) => setCheckoutTime(e.target.value)}
@@ -288,8 +309,8 @@ export default function GuestCheckout() {
                 <div>
                   <label className="text-xs text-gray-400 block mb-1.5">TOTAL BILLABLE DAYS</label>
                   <div className="w-full bg-slate-900/60 p-3 rounded-xl border border-slate-800 font-bold text-yellow-400 text-sm">
-                    {billingCalculations.totalDays} Day(s) 
-                    <span className="text-[10px] text-gray-500 font-normal block">(&gt;22 hours updates cycle)</span>
+                    {billingCalculations.totalDays} Day(s)
+                    <span className="text-[10px] text-gray-500 font-normal block">(Ceiling dynamic hour cycle)</span>
                   </div>
                 </div>
               </div>
@@ -303,29 +324,31 @@ export default function GuestCheckout() {
                 </div>
 
                 <div>
-                  <label className="text-xs text-blue-400 block mb-1.5">ADVANCE PAID (EDITABLE)</label>
-                  <input
-                    type="number"
-                    value={advancePaid || ""}
-                    onChange={(e) => setAdvancePaid(Number(e.target.value))}
-                    className="w-full bg-slate-900 p-3 rounded-xl text-sm border border-blue-500/30 text-white font-mono font-bold"
-                    placeholder="0.00"
-                  />
+                  <label className="text-xs text-blue-400 block mb-1.5">ADVANCE PAID</label>
+                  <div className="w-full bg-slate-900/60 p-3 rounded-xl font-mono font-bold border border-slate-800 text-gray-300 text-base">
+                    ₹{(selectedRecord.advance_amount || 0).toLocaleString()}
+                  </div>
                 </div>
 
                 <div>
                   <label className="text-xs text-red-400 block mb-1.5">BALANCE PAYABLE DUE (₹)</label>
-                  <div className={`w-full p-3 rounded-xl font-mono font-bold text-base border bg-slate-900 ${
-                    billingCalculations.balanceAmount >= 0 ? "text-red-400 border-red-500/20" : "text-purple-400 border-purple-500/20"
-                  }`}>
+                  <div
+                    className={`w-full p-3 rounded-xl font-mono font-bold text-base border bg-slate-900 ${
+                      billingCalculations.balanceAmount >= 0
+                        ? "text-red-400 border-red-500/20"
+                        : "text-purple-400 border-purple-500/20"
+                    }`}
+                  >
                     ₹{billingCalculations.balanceAmount.toLocaleString()}
                   </div>
                 </div>
               </div>
 
-              <div className="grid sm:grid-cols-2 gap-4 pt-2">
+              <div className="grid sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-4 pt-2">
                 <div>
-                  <label className="text-xs text-gray-400 block mb-1.5"><CreditCard size={12} className="inline mr-1" /> PAYMODE</label>
+                  <label className="text-xs text-gray-400 block mb-1.5">
+                    <CreditCard size={12} className="inline mr-1" /> PAYMODE
+                  </label>
                   <select
                     value={payMode}
                     onChange={(e) => setPayMode(e.target.value)}
@@ -334,17 +357,53 @@ export default function GuestCheckout() {
                     <option value="CASH">Cash</option>
                     <option value="UPI">UPI / QR Scan</option>
                     <option value="CARD">Debit / Credit Card</option>
-                    <option value="NETBANKING">Net Banking</option>
+                    <option value="NET_BANKING">Net Banking</option>
                   </select>
                 </div>
 
+                {/* Added Discount Field */}
                 <div>
-                  <label className="text-xs text-gray-400 block mb-1.5">REFERENCE (TXN ID / NOTES)</label>
+                  <label className="text-xs text-yellow-400 block mb-1.5">
+                    <Percent size={12} className="inline mr-1" /> DISCOUNT (₹)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    value={discount}
+                    onChange={(e) => setDiscount(e.target.value)}
+                    className="w-full bg-slate-900 p-3 rounded-xl text-sm border border-slate-700 font-mono font-bold text-yellow-400 focus:outline-none focus:border-yellow-500/50"
+                  />
+                </div>
+
+                {/* Amount Paid Field automatically subtracting discount */}
+                <div>
+                  <label className="text-xs text-emerald-400 block mb-1.5">
+                    <Banknote size={12} className="inline mr-1" /> AMOUNT PAID (₹)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    placeholder="Net collected amount"
+                    value={amountPaid}
+                    onChange={(e) => setAmountPaid(e.target.value)}
+                    className={`w-full bg-slate-900 p-3 rounded-xl text-sm border font-mono font-bold text-emerald-400 focus:outline-none ${
+                      parseFloat(amountPaid) === parseFloat((billingCalculations.balanceAmount - (parseFloat(discount) || 0)).toFixed(2))
+                        ? "border-emerald-500/40"
+                        : "border-red-500"
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1.5">REMARKS / NOTES</label>
                   <input
                     type="text"
-                    placeholder="e.g. UPI Ref Number or Check ID logs"
-                    value={reference}
-                    onChange={(e) => setReference(e.target.value)}
+                    placeholder="Transaction or discount notes"
+                    value={remarks}
+                    onChange={(e) => setRemarks(e.target.value)}
                     className="w-full bg-slate-900 p-3 rounded-xl text-sm border border-slate-700 text-white"
                   />
                 </div>
