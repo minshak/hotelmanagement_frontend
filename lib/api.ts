@@ -30,11 +30,11 @@ api.interceptors.response.use(
   (error) => {
     if (error.response && error.response.status === 401) {
       console.warn("Unauthorized request! Token may be expired or missing.");
-      
+
       if (typeof window !== "undefined") {
         // Optional: Clear expired tokens and boot user to login page
         localStorage.removeItem("access");
-        // window.location.href = "/login"; 
+        // window.location.href = "/"; 
       }
     }
     return Promise.reject(error);

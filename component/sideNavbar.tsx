@@ -37,7 +37,7 @@ export default function SideBar() {
   };
 
   return (
-    <aside className="w-72 min-h-screen bg-[#12182D] border-r border-slate-800 flex flex-col p-5 justify-between">
+    <aside className="w-72 h-screen sticky top-0 bg-[#12182D] border-r border-slate-800 flex flex-col p-5 justify-between">
       {/* Top Navigation Links */}
       <div>
         <h1 className="text-2xl font-bold text-blue-400 mb-10">ZenithHMS</h1>

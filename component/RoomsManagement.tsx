@@ -1,526 +1,390 @@
 "use client";
+import React, { useState, useEffect, useMemo, FormEvent } from 'react';
+import { Bed, Plus, ArrowLeft, X, Snowflake, DollarSign, Trash2, Pencil, Check } from 'lucide-react';
 
-import { useEffect, useState } from "react";
-import {
-  getRoomTypes,
-  getRooms,
-  createRoomType,
-  updateRoomType,
-  deleteRoomType,
-  createRoom,
-  updateRoom,
-  deleteRoom,
-  RoomType,
-  Room,
-} from "../lib/api";
-import { 
-  Bed, 
-  Pencil, 
-  Trash2, 
-  Plus, 
-  X, 
-  Snowflake, 
-  DollarSign, 
-  CheckCircle2 
-} from "lucide-react";
+// Define strict interfaces for our state data
+interface Room {
+    id: number;
+    number: string;
+    type: string;
+    ac: boolean;
+    rent: number;
+    status: 'available' | 'occupied' | 'maintenance';
+}
 
-export default function RoomsPage() {
-  const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [selectedType, setSelectedType] = useState<RoomType | null>(null);
-  const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
+interface RoomDraft {
+    number: string;
+    type: string;
+    ac: boolean;
+    rent: string;
+    status: string;
+}
 
-  // Modal Visibility States
-  const [showAddTypeModal, setShowAddTypeModal] = useState(false);
-  const [showAddRoomModal, setShowAddRoomModal] = useState(false);
-  const [isEditingRoom, setIsEditingRoom] = useState(false);
-  const [isEditingType, setIsEditingType] = useState(false);
+const initialRooms: Room[] = [
+    { id: 1, number: '1001', type: 'Single', ac: true, rent: 1000, status: 'available' },
+    { id: 2, number: '1002', type: 'Single', ac: true, rent: 1000, status: 'occupied' },
+    { id: 3, number: '1003', type: 'Single', ac: true, rent: 1000, status: 'available' },
+    { id: 4, number: '2001', type: 'Double', ac: true, rent: 1800, status: 'available' },
+    { id: 5, number: '2002', type: 'Double', ac: false, rent: 1500, status: 'maintenance' },
+    { id: 6, number: '2003', type: 'Double', ac: true, rent: 1800, status: 'occupied' },
+    { id: 7, number: '3001', type: 'Suite', ac: true, rent: 3500, status: 'occupied' },
+    { id: 8, number: '3002', type: 'Suite', ac: true, rent: 3500, status: 'available' },
+];
 
-  // Form States
-  const [newType, setNewType] = useState({ category: "", is_ac: "AC" as "AC" | "NON_AC", rent: "", active: true });
-  const [newRoom, setNewRoom] = useState({ room_no: "", room_type: "", status: "AVAILABLE" as "AVAILABLE" | "OCCUPIED" | "MAINTENANCE", active: true });
-  const [editRoomData, setEditRoomData] = useState<Partial<Room>>({});
-  const [editTypeData, setEditTypeData] = useState<Partial<RoomType>>({});
+const THEMES = [
+    { icon: 'bg-blue-500/15 text-blue-400', border: 'hover:border-blue-500/60' },
+    { icon: 'bg-purple-500/15 text-purple-400', border: 'hover:border-purple-500/60' },
+    { icon: 'bg-amber-500/15 text-amber-400', border: 'hover:border-amber-500/60' },
+    { icon: 'bg-teal-500/15 text-teal-400', border: 'hover:border-teal-500/60' },
+    { icon: 'bg-rose-500/15 text-rose-400', border: 'hover:border-rose-500/60' },
+];
 
-  useEffect(() => {
-    loadData();
-  }, []);
+const STATUS = {
+    available: { label: 'Available', pill: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30', dot: 'bg-emerald-400', card: 'from-slate-800 to-emerald-950/50 border-emerald-700/30' },
+    occupied: { label: 'Occupied', pill: 'bg-amber-500/15 text-amber-400 border-amber-500/30', dot: 'bg-amber-400', card: 'from-slate-800 to-amber-950/50 border-amber-700/30' },
+    maintenance: { label: 'Maintenance', pill: 'bg-red-500/15 text-red-400 border-red-500/30', dot: 'bg-red-400', card: 'from-slate-800 to-red-950/50 border-red-700/30' },
+};
 
-  const loadData = async () => {
-    try {
-      const types = await getRoomTypes();
-      const roomData = await getRooms();
-      setRoomTypes(types || []);
-      setRooms(roomData || []);
-    } catch (error) {
-      console.error("Error loading data:", error);
-    }
-  };
+const emptyDraft: RoomDraft = { number: '', type: '', ac: true, rent: '', status: 'available' };
 
-  // --- ACTIONS ---
-  const handleCreateRoomType = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newType.category || !newType.rent) return alert("Please fill all fields");
-    try {
-      await createRoomType(newType);
-      setNewType({ category: "", is_ac: "AC", rent: "", active: true });
-      setShowAddTypeModal(false);
-      await loadData();
-    } catch (error) {
-      console.error(error);
-      alert("Failed to create room category.");
-    }
-  };
+export default function RoomsManagement() {
+    const [rooms, setRooms] = useState<Room[]>(initialRooms);
+    const [selectedType, setSelectedType] = useState<string | null>(null);
+    const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
+    const [editing, setEditing] = useState<boolean>(false);
+    const [draft, setDraft] = useState<RoomDraft>(emptyDraft);
+    const [addOpen, setAddOpen] = useState<boolean>(false);
 
-  const handleUpdateRoomType = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedType) return;
-    try {
-      const updated = await updateRoomType(selectedType.id, editTypeData);
-      setSelectedType(updated);
-      setIsEditingType(false);
-      await loadData();
-    } catch (error) {
-      console.error(error);
-      alert("Failed to update category settings.");
-    }
-  };
+    useEffect(() => {
+        function onKey(e: KeyboardEvent) {
+            if (e.key === 'Escape') {
+                setSelectedRoom(null);
+                setAddOpen(false);
+            }
+        }
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, []);
 
-  // UPDATED: Handles clean cascade deletion or normal deletion
-  const handleDeleteRoomType = async (id: number) => {
-    const connectedRooms = rooms.filter((r) => r.room_type === id);
-    
-    if (connectedRooms.length > 0) {
-      // Prompt user if they want to clear everything out dynamically
-      const cascadeConfirm = confirm(
-        `This category has ${connectedRooms.length} room(s) linked to it.\n\nWould you like to delete all associated rooms first and then remove this category?`
-      );
-      
-      if (!cascadeConfirm) return;
+    const types = useMemo(() => Array.from(new Set(rooms.map((r) => r.type))), [rooms]);
 
-      try {
-        // Delete all rooms attached to this category
-        await Promise.all(connectedRooms.map((room) => deleteRoom(room.id)));
-      } catch (err) {
-        console.error("Error clearing child rooms:", err);
-        return alert("Failed to clear out individual rooms. Aborting deletion.");
-      }
-    } else {
-      // Normal confirmation fallback if no rooms are attached
-      if (!confirm("Delete this category permanently?")) return;
+    const typeSummary = useMemo(() => types.map((t) => ({
+        type: t,
+        count: rooms.filter((r) => r.type === t).length,
+        available: rooms.filter((r) => r.type === t && r.status === 'available').length,
+    })), [types, rooms]);
+
+    const roomsInView = selectedType ? rooms.filter((r) => r.type === selectedType) : [];
+
+    function openAdd() {
+        setDraft({ ...emptyDraft, type: selectedType || '' });
+        setAddOpen(true);
     }
 
-    try {
-      await deleteRoomType(id);
-      setSelectedType(null);
-      await loadData();
-    } catch (error) {
-      console.error(error);
-      alert("Server Error (500): Could not delete category. Verify your backend constraints.");
+    function submitAdd(e: FormEvent) {
+        e.preventDefault();
+        if (!draft.number.trim() || !draft.type.trim() || !draft.rent) return;
+        setRooms((prev) => [
+            ...prev,
+            {
+                id: Date.now(),
+                number: draft.number.trim(),
+                type: draft.type.trim(),
+                ac: draft.ac,
+                rent: Number(draft.rent),
+                status: draft.status as Room['status']
+            },
+        ]);
+        setAddOpen(false);
     }
-  };
 
-  const handleCreateRoom = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const targetTypeId = selectedType ? selectedType.id : Number(newRoom.room_type);
-    if (!newRoom.room_no || !targetTypeId) return alert("Please specify room details completely");
-    try {
-      await createRoom({
-        room_no: newRoom.room_no,
-        room_type: targetTypeId,
-        status: newRoom.status,
-        active: newRoom.active,
-      });
-      setNewRoom({ room_no: "", room_type: "", status: "AVAILABLE", active: true });
-      setShowAddRoomModal(false);
-      await loadData();
-    } catch (error) {
-      console.error(error);
-      alert("Failed to deploy new room.");
+    function openRoom(room: Room) {
+        setSelectedRoom(room);
+        setEditing(false);
     }
-  };
 
-  const handleUpdateRoom = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedRoom) return;
-    try {
-      const updated = await updateRoom(selectedRoom.id, editRoomData);
-      setSelectedRoom(updated);
-      setIsEditingRoom(false);
-      await loadData();
-    } catch (error) {
-      console.error(error);
-      alert("Failed to update room configuration.");
+    function startEdit() {
+        if (!selectedRoom) return; // Guard clause solves 'possibly null' issues
+        setDraft({
+            number: selectedRoom.number,
+            type: selectedRoom.type,
+            ac: selectedRoom.ac,
+            rent: String(selectedRoom.rent),
+            status: selectedRoom.status
+        });
+        setEditing(true);
     }
-  };
 
-  const handleDeleteRoom = async (id: number) => {
-    if (!confirm("Are you sure you want to delete this room?")) return;
-    try {
-      await deleteRoom(id);
-      setSelectedRoom(null);
-      await loadData();
-    } catch (error) {
-      console.error(error);
-      alert("Failed to delete room item.");
+    function saveEdit(e: FormEvent) {
+        e.preventDefault();
+        if (!selectedRoom) return;
+        const updatedRent = Number(draft.rent);
+
+        setRooms((prev) => prev.map((r) => (r.id === selectedRoom.id ? { ...r, ...draft, rent: updatedRent, status: draft.status as Room['status'] } : r)));
+        setSelectedRoom((r) => r ? { ...r, ...draft, rent: updatedRent, status: draft.status as Room['status'] } : null);
+        setEditing(false);
     }
-  };
 
-  const filteredRooms = selectedType
-    ? rooms.filter((room) => room.room_type === selectedType.id)
-    : [];
+    function deleteRoom(id: number) {
+        setRooms((prev) => prev.filter((r) => r.id !== id));
+        setSelectedRoom(null);
+    }
 
-  return (
-    <div className="min-h-screen bg-[#020617] text-slate-100 p-10 font-sans selection:bg-blue-500/30">
-      
-      {/* HEADER BAR */}
-      <div className="flex justify-between items-center mb-10">
-        <div>
-          {!selectedType ? (
-            <>
-              <div className="flex items-center gap-3">
-                <Bed className="w-8 h-8 text-blue-400" />
-                <h1 className="text-4xl font-extrabold tracking-tight">Rooms Management</h1>
-              </div>
-              <p className="text-sm text-slate-400 mt-2">Tap a room type to see every room, tap a room to see its details.</p>
-            </>
-          ) : (
-            <>
-              <button onClick={() => setSelectedType(null)} className="text-sm text-slate-400 hover:text-white mb-2 flex items-center gap-1 transition">
-                &larr; All room types
-              </button>
-              <div className="flex items-center gap-4">
-                <Bed className="w-8 h-8 text-blue-400" />
-                <h1 className="text-4xl font-extrabold tracking-tight">{selectedType.category} Rooms</h1>
-              </div>
-              <p className="text-sm text-slate-400 mt-1">{filteredRooms.length} rooms of this type</p>
-            </>
-          )}
-        </div>
-
-        <button 
-          onClick={() => selectedType ? setShowAddRoomModal(true) : setShowAddTypeModal(true)}
-          className="bg-blue-600 hover:bg-blue-500 text-white font-medium px-5 py-3 rounded-2xl flex items-center gap-2 shadow-lg shadow-blue-600/20 active:scale-95 transition-all text-sm"
-        >
-          <Plus className="w-4 h-4 stroke-[3]" /> Add Room
-        </button>
-      </div>
-
-      {/* --- ROOM TYPES GRID VIEW --- */}
-      {!selectedType && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {roomTypes.map((type, idx) => {
-            const count = rooms.filter((r) => r.room_type === type.id).length;
-            const available = rooms.filter((r) => r.room_type === type.id && r.status === "AVAILABLE").length;
-            const icons = ["text-blue-400 bg-blue-950/40", "text-purple-400 bg-purple-950/40", "text-amber-400 bg-amber-950/40"];
-
-            return (
-              <div
-                key={type.id}
-                onClick={() => { setSelectedType(type); setEditTypeData(type); }}
-                className="cursor-pointer rounded-2xl border border-slate-800/80 p-6 bg-[#0b1329]/50 hover:bg-[#0b1329] hover:border-slate-700 transition-all duration-200 group relative"
-              >
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-4 ${icons[idx % 3]}`}>
-                  <Bed className="w-6 h-6" />
+    return (
+        <div className="min-h-screen bg-slate-950 text-slate-100 p-5 md:p-10 font-sans">
+            <div className="max-w-5xl mx-auto">
+                {/* Header */}
+                <div className="flex items-start justify-between gap-4 mb-8">
+                    <div>
+                        {selectedType ? (
+                            <button
+                                onClick={() => setSelectedType(null)}
+                                className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-blue-400 mb-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
+                            >
+                                <ArrowLeft size={15} /> All room types
+                            </button>
+                        ) : null}
+                        <h1 className="text-2xl md:text-3xl font-bold flex items-center gap-2.5">
+                            <Bed className="text-blue-400" size={26} />
+                            {selectedType ? `${selectedType} Rooms` : 'Rooms Management'}
+                        </h1>
+                        <p className="text-slate-400 text-sm mt-1">
+                            {selectedType
+                                ? `${roomsInView.length} room${roomsInView.length === 1 ? '' : 's'} of this type`
+                                : 'Tap a room type to see every room, tap a room to see its details.'}
+                        </p>
+                    </div>
+                    <button
+                        onClick={openAdd}
+                        className="shrink-0 flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold px-4 py-2.5 rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                    >
+                        <Plus size={18} /> Add Room
+                    </button>
                 </div>
-                <h2 className="text-2xl font-bold tracking-wide text-white group-hover:text-blue-400 transition-colors">{type.category}</h2>
-                <p className="text-slate-400 text-sm mt-1">{count} rooms</p>
-                <p className="text-emerald-400 text-sm font-medium mt-3">{available} available</p>
-              </div>
-            );
-          })}
 
-          {/* Dotted Placeholder to Create New Type */}
-          <div 
-            onClick={() => setShowAddTypeModal(true)}
-            className="cursor-pointer rounded-2xl border-2 border-dashed border-slate-800 hover:border-slate-600 bg-transparent py-12 flex flex-col items-center justify-center gap-3 transition"
-          >
-            <div className="w-10 h-10 border border-dashed border-slate-600 rounded-xl flex items-center justify-center text-slate-400">
-              <Plus className="w-5 h-5" />
+                {/* TYPE GRID VIEW */}
+                {!selectedType && (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                        {typeSummary.map((t, i) => {
+                            const theme = THEMES[i % THEMES.length];
+                            return (
+                                <button
+                                    key={t.type}
+                                    onClick={() => setSelectedType(t.type)}
+                                    className={`text-left rounded-2xl border border-slate-700/60 bg-slate-900/70 p-5 transition-all hover:-translate-y-0.5 ${theme.border} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400`}
+                                >
+                                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-3 ${theme.icon}`}>
+                                        <Bed size={19} />
+                                    </div>
+                                    <div className="font-bold text-lg">{t.type}</div>
+                                    <div className="text-slate-400 text-sm mt-0.5">{t.count} room${t.count === 1 ? '' : 's'}</div>
+                                    <div className="text-emerald-400 text-xs mt-2">{t.available} available</div>
+                                </button>
+                            );
+                        })}
+                        <button
+                            onClick={openAdd}
+                            className="rounded-2xl border-2 border-dashed border-slate-700 hover:border-blue-500 flex flex-col items-center justify-center gap-2 text-slate-500 hover:text-blue-400 p-5 min-h-[140px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                        >
+                            <div className="w-10 h-10 rounded-xl border-2 border-dashed border-current flex items-center justify-center">
+                                <Plus size={18} />
+                            </div>
+                            <span className="text-sm font-medium">Add Room</span>
+                        </button>
+                    </div>
+                )}
+
+                {/* ROOMS OF SELECTED TYPE */}
+                {selectedType && (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                        {roomsInView.map((room) => {
+                            const s = STATUS[room.status] || STATUS.available;
+                            return (
+                                <button
+                                    key={room.id}
+                                    onClick={() => openRoom(room)}
+                                    className={`relative aspect-[8/5] rounded-xl border bg-gradient-to-br ${s.card} p-3 text-left transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400`}
+                                >
+                                    <div className="w-6 h-4 rounded-sm bg-gradient-to-br from-amber-300 to-amber-600 opacity-80" />
+                                    <div className="absolute top-3 right-3 text-[10px] uppercase tracking-wide text-slate-400">{room.type}</div>
+                                    <div className="font-mono text-xl font-bold mt-3 tracking-wider">{room.number}</div>
+                                    <div className="absolute bottom-3 right-3 flex items-center gap-1">
+                                        <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
+                                        <span className="text-[10px] text-slate-400">{s.label}</span>
+                                    </div>
+                                    <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-black/30 rounded-b-xl" />
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+
+                {/* ROOM DETAILS MODAL */}
+                {selectedRoom && (
+                    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                        <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm p-6 relative">
+                            <button
+                                onClick={() => setSelectedRoom(null)}
+                                className="absolute top-4 right-4 text-slate-500 hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded"
+                            >
+                                <X size={18} />
+                            </button>
+
+                            {!editing ? (
+                                <>
+                                    <div className="font-mono text-3xl font-bold tracking-wider">{selectedRoom.number}</div>
+                                    <div className="text-slate-400 text-sm mb-5">{selectedRoom.type} room</div>
+
+                                    <div className="space-y-3 text-sm">
+                                        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                                            <span className="flex items-center gap-2 text-slate-400"><Snowflake size={15} /> AC status</span>
+                                            <span>{selectedRoom.ac ? 'Air Conditioned' : 'Non-AC'}</span>
+                                        </div>
+                                        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                                            <span className="flex items-center gap-2 text-slate-400"><DollarSign size={15} /> Rent (daily)</span>
+                                            <span>${Number(selectedRoom.rent).toFixed(2)}</span>
+                                        </div>
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-slate-400">Status</span>
+                                            <span className={`text-xs px-2.5 py-1 rounded-full border ${(STATUS[selectedRoom.status] || STATUS.available).pill}`}>
+                                                {(STATUS[selectedRoom.status] || STATUS.available).label}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex gap-2 mt-6">
+                                        <button
+                                            onClick={startEdit}
+                                            className="flex-1 flex items-center justify-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-sm font-medium py-2.5 rounded-xl transition-colors"
+                                        >
+                                            <Pencil size={14} /> Edit
+                                        </button>
+                                        <button
+                                            onClick={() => deleteRoom(selectedRoom.id)}
+                                            className="flex-1 flex items-center justify-center gap-1.5 bg-red-600/15 hover:bg-red-600/25 text-red-400 text-sm font-medium py-2.5 rounded-xl transition-colors"
+                                        >
+                                            <Trash2 size={14} /> Delete
+                                        </button>
+                                    </div>
+                                </>
+                            ) : (
+                                <RoomForm draft={draft} setDraft={setDraft} types={types} onSubmit={saveEdit} submitLabel="Save changes" onCancel={() => setEditing(false)} />
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {/* ADD ROOM MODAL */}
+                {addOpen && (
+                    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                        <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm p-6 relative">
+                            <button
+                                onClick={() => setAddOpen(false)}
+                                className="absolute top-4 right-4 text-slate-500 hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded"
+                            >
+                                <X size={18} />
+                            </button>
+                            <h2 className="text-lg font-bold mb-4 flex items-center gap-2"><Plus size={18} className="text-blue-400" /> Add Room</h2>
+                            <RoomForm draft={draft} setDraft={setDraft} types={types} onSubmit={submitAdd} submitLabel="Add Room" onCancel={() => setAddOpen(false)} />
+                        </div>
+                    </div>
+                )}
             </div>
-            <span className="text-sm text-slate-400 font-medium">Add Room Type</span>
-          </div>
         </div>
-      )}
+    );
+}
 
-      {/* --- INDIVIDUAL ROOMS LIST VIEW --- */}
-      {selectedType && (
-        <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {filteredRooms.map((room) => {
-              const isAvailable = room.status === "AVAILABLE";
-              return (
-                <div
-                  key={room.id}
-                  onClick={() => { setSelectedRoom(room); setEditRoomData(room); setIsEditingRoom(false); }}
-                  className={`cursor-pointer rounded-2xl p-6 border transition-all ${
-                    isAvailable 
-                      ? "bg-gradient-to-br from-[#0f2430] to-[#0b1329] border-emerald-950/50 hover:border-emerald-500/50" 
-                      : "bg-gradient-to-br from-[#1e1625] to-[#0b1329] border-amber-950/50 hover:border-amber-500/50"
-                  }`}
-                >
-                  <div className="flex justify-between items-start">
-                    <div className="w-8 h-5 rounded bg-amber-500/90 shadow-sm" />
-                    <span className="text-xs text-slate-400 font-semibold tracking-wider uppercase">{selectedType.category}</span>
-                  </div>
-                  <h2 className="text-4xl font-black mt-6 tracking-wider text-slate-100 font-mono">{room.room_no}</h2>
-                  <div className="mt-6 flex justify-end items-center gap-1.5 text-xs font-semibold">
-                    <span className={isAvailable ? "text-emerald-400" : "text-amber-400"}>&bull;</span>
-                    <span className={isAvailable ? "text-emerald-400/90" : "text-amber-400/90"}>
-                      {room.status.charAt(0) + room.status.slice(1).toLowerCase()}
-                    </span>
-                  </div>
+// Strictly Typed Props interface for the child component
+interface RoomFormProps {
+    draft: RoomDraft;
+    setDraft: React.Dispatch<React.SetStateAction<RoomDraft>>;
+    types: string[];
+    onSubmit: (e: FormEvent) => void;
+    submitLabel: string;
+    onCancel: () => void;
+}
+
+function RoomForm({ draft, setDraft, types, onSubmit, submitLabel, onCancel }: RoomFormProps) {
+    return (
+        <form onSubmit={onSubmit} className="space-y-4">
+            <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Room number</label>
+                <input
+                    value={draft.number}
+                    onChange={(e) => setDraft({ ...draft, number: e.target.value })}
+                    placeholder="e.g. 1004"
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                    required
+                />
+            </div>
+
+            <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Room type</label>
+                <input
+                    value={draft.type}
+                    onChange={(e) => setDraft({ ...draft, type: e.target.value })}
+                    placeholder="e.g. Single, Double, Suite"
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                    required
+                />
+                {types.length > 0 && (
+                    <div className="flex gap-1.5 mt-2 flex-wrap">
+                        {types.map((t) => (
+                            <button
+                                type="button"
+                                key={t}
+                                onClick={() => setDraft({ ...draft, type: t })}
+                                className="text-xs px-2.5 py-1 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+                            >
+                                {t}
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            <div className="flex gap-3">
+                <div className="flex-1">
+                    <label className="block text-xs text-slate-400 mb-1.5">Rent (daily)</label>
+                    <input
+                        type="number"
+                        value={draft.rent}
+                        onChange={(e) => setDraft({ ...draft, rent: e.target.value })}
+                        placeholder="1000"
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                        required
+                    />
                 </div>
-              );
-            })}
-          </div>
+                <div className="flex-1">
+                    <label className="block text-xs text-slate-400 mb-1.5">Status</label>
+                    <select
+                        value={draft.status}
+                        onChange={(e) => setDraft({ ...draft, status: e.target.value })}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                    >
+                        <option value="available">Available</option>
+                        <option value="occupied">Occupied</option>
+                        <option value="maintenance">Maintenance</option>
+                    </select>
+                </div>
+            </div>
 
-          {/* Action Row */}
-          <div className="mt-12 flex gap-4 border-t border-slate-900 pt-6">
-            <button onClick={() => setIsEditingType(true)} className="bg-slate-900 hover:bg-slate-800 text-slate-300 px-5 py-2.5 rounded-xl text-sm font-medium transition flex items-center gap-2">
-              <Pencil className="w-4 h-4" /> Edit Category Settings
-            </button>
-            <button onClick={() => handleDeleteRoomType(selectedType.id)} className="bg-red-950/40 hover:bg-red-950/80 border border-red-900/30 text-red-400 px-5 py-2.5 rounded-xl text-sm font-medium transition flex items-center gap-2">
-              <Trash2 className="w-4 h-4" /> Delete Category
-            </button>
-          </div>
-        </>
-      )}
-
-      {/* --- DETAILED DIALOG / MODAL --- */}
-      {selectedRoom && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#0f172a] border border-slate-800 p-8 rounded-3xl w-full max-w-[480px] shadow-2xl relative">
-            
-            <button 
-              onClick={() => { setSelectedRoom(null); setIsEditingRoom(false); }} 
-              className="absolute top-6 right-6 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition"
+            <button
+                type="button"
+                onClick={() => setDraft({ ...draft, ac: !draft.ac })}
+                className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium border transition-colors ${draft.ac ? 'bg-blue-500/15 border-blue-500/40 text-blue-300' : 'bg-slate-800 border-slate-700 text-slate-400'}`}
             >
-              <X className="w-5 h-5" />
+                <Snowflake size={15} /> {draft.ac ? 'Air Conditioned' : 'Non-AC'}
             </button>
 
-            {!isEditingRoom ? (
-              <>
-                <h2 className="text-5xl font-black tracking-wider text-white font-mono">{selectedRoom.room_no}</h2>
-                <p className="text-slate-400 font-medium text-base mt-1">{selectedType?.category} room</p>
-
-                <div className="mt-8 space-y-6">
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-slate-400 flex items-center gap-2">
-                      <Snowflake className="w-4 h-4 text-blue-400" /> AC status
-                    </span>
-                    <span className="text-white font-medium">{selectedType?.is_ac === "AC" ? "Air Conditioned" : "Non-AC"}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-sm border-t border-slate-800/80 pt-4">
-                    <span className="text-slate-400 flex items-center gap-2">
-                      <DollarSign className="w-4 h-4 text-emerald-400" /> Rent (daily)
-                    </span>
-                    <span className="text-white font-bold text-base font-mono">${selectedType?.rent}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-sm border-t border-slate-800/80 pt-4">
-                    <span className="text-slate-400 flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-slate-400" /> Status
-                    </span>
-                    <span className={`px-4 py-1 rounded-full text-xs font-bold tracking-wide ${
-                      selectedRoom.status === "AVAILABLE" ? "bg-emerald-950/60 text-emerald-400 border border-emerald-800/40" : "bg-amber-950/60 text-amber-400 border border-amber-800/40"
-                    }`}>
-                      {selectedRoom.status.charAt(0) + selectedRoom.status.slice(1).toLowerCase()}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4 mt-8">
-                  <button 
-                    onClick={() => { setEditRoomData(selectedRoom); setIsEditingRoom(true); }} 
-                    className="bg-[#1e293b] hover:bg-[#334155] border border-slate-700/60 text-white font-semibold py-3.5 rounded-xl flex items-center justify-center gap-2 transition"
-                  >
-                    <Pencil className="w-4 h-4" /> Edit
-                  </button>
-                  <button 
-                    onClick={() => handleDeleteRoom(selectedRoom.id)} 
-                    className="bg-red-950/60 hover:bg-red-900 border border-red-800/40 text-red-200 font-semibold py-3.5 rounded-xl flex items-center justify-center gap-2 transition"
-                  >
-                    <Trash2 className="w-4 h-4" /> Delete
-                  </button>
-                </div>
-              </>
-            ) : (
-              /* Inline Room Edit View */
-              <form onSubmit={handleUpdateRoom} className="space-y-4">
-                <h3 className="text-xl font-bold mb-4 text-white">Edit Room Settings</h3>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1 font-medium">Room Number</label>
-                  <input
-                    type="text"
-                    value={editRoomData.room_no || ""}
-                    onChange={(e) => setEditRoomData({ ...editRoomData, room_no: e.target.value })}
-                    className="w-full bg-[#020617] border border-slate-700 rounded-xl px-4 py-2.5 text-white font-mono outline-none focus:border-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1 font-medium">Status Flag</label>
-                  <select
-                    value={editRoomData.status || "AVAILABLE"}
-                    onChange={(e) => setEditRoomData({ ...editRoomData, status: e.target.value as any })}
-                    className="w-full bg-[#020617] border border-slate-700 rounded-xl px-4 py-2.5 text-white outline-none focus:border-blue-500"
-                  >
-                    <option value="AVAILABLE">Available</option>
-                    <option value="OCCUPIED">Occupied</option>
-                    <option value="MAINTENANCE">Maintenance</option>
-                  </select>
-                </div>
-                <div className="grid grid-cols-2 gap-4 pt-4">
-                  <button type="button" onClick={() => setIsEditingRoom(false)} className="bg-slate-800 text-white py-2.5 rounded-xl text-sm">Cancel</button>
-                  <button type="submit" className="bg-emerald-600 text-white py-2.5 rounded-xl text-sm font-semibold">Save Configuration</button>
-                </div>
-              </form>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* --- ADD NEW CATEGORY MODAL --- */}
-      {showAddTypeModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <form onSubmit={handleCreateRoomType} className="bg-[#0f172a] border border-slate-800 p-8 rounded-3xl w-full max-w-[440px] shadow-2xl">
-            <h2 className="text-2xl font-bold mb-6 text-white">Create Room Category</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Category Profile Name</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Single, Double, Executive Suite"
-                  value={newType.category}
-                  onChange={(e) => setNewType({ ...newType, category: e.target.value })}
-                  className="w-full bg-[#020617] border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:border-blue-500 outline-none"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Base Price Rate (Daily)</label>
-                <input
-                  type="number"
-                  placeholder="Rent Value"
-                  value={newType.rent}
-                  onChange={(e) => setNewType({ ...newType, rent: e.target.value })}
-                  className="w-full bg-[#020617] border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:border-blue-500 outline-none"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Climatic System Type</label>
-                <select
-                  value={newType.is_ac}
-                  onChange={(e) => setNewType({ ...newType, is_ac: e.target.value as any })}
-                  className="w-full bg-[#020617] border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:border-blue-500 outline-none"
-                >
-                  <option value="AC">Air Conditioned</option>
-                  <option value="NON_AC">Non-AC</option>
-                </select>
-              </div>
+            <div className="flex gap-2 pt-1">
+                <button type="button" onClick={onCancel} className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-slate-800 hover:bg-slate-700 transition-colors">
+                    Cancel
+                </button>
+                <button type="submit" className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-500 text-white transition-colors">
+                    <Check size={15} /> {submitLabel}
+                </button>
             </div>
-            <div className="grid grid-cols-2 gap-4 mt-8">
-              <button type="button" onClick={() => setShowAddTypeModal(false)} className="bg-slate-800 text-slate-300 py-3 rounded-xl text-sm">Cancel</button>
-              <button type="submit" className="bg-blue-600 text-white py-3 rounded-xl text-sm font-semibold">Build Class</button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* --- ADD NEW ROOM UNIT MODAL --- */}
-      {showAddRoomModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <form onSubmit={handleCreateRoom} className="bg-[#0f172a] border border-slate-800 p-8 rounded-3xl w-full max-w-[440px] shadow-2xl">
-            <h2 className="text-2xl font-bold mb-6 text-white">Add New Room Space</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Room Index Number</label>
-                <input
-                  type="text"
-                  placeholder="e.g. 1001"
-                  value={newRoom.room_no}
-                  onChange={(e) => setNewRoom({ ...newRoom, room_no: e.target.value })}
-                  className="w-full bg-[#020617] border border-slate-700 rounded-xl px-4 py-2.5 text-white font-mono outline-none focus:border-blue-500"
-                />
-              </div>
-
-              {!selectedType && (
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Target Category Assignment</label>
-                  <select
-                    value={newRoom.room_type}
-                    onChange={(e) => setNewRoom({ ...newRoom, room_type: e.target.value })}
-                    className="w-full bg-[#020617] border border-slate-700 rounded-xl px-4 py-2.5 text-white outline-none focus:border-blue-500"
-                  >
-                    <option value="">Select Category...</option>
-                    {roomTypes.map(t => <option key={t.id} value={t.id}>{t.category}</option>)}
-                  </select>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Initial Status Layout</label>
-                <select
-                  value={newRoom.status}
-                  onChange={(e) => setNewRoom({ ...newRoom, status: e.target.value as any })}
-                  className="w-full bg-[#020617] border border-slate-700 rounded-xl px-4 py-2.5 text-white outline-none focus:border-blue-500"
-                >
-                  <option value="AVAILABLE">Available</option>
-                  <option value="OCCUPIED">Occupied</option>
-                  <option value="MAINTENANCE">Maintenance</option>
-                </select>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4 mt-8">
-              <button type="button" onClick={() => setShowAddRoomModal(false)} className="bg-slate-800 text-slate-300 py-3 rounded-xl text-sm">Cancel</button>
-              <button type="submit" className="bg-blue-600 text-white py-3 rounded-xl text-sm font-semibold">Deploy Room</button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* --- EDIT CATEGORY MODAL --- */}
-      {isEditingType && selectedType && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <form onSubmit={handleUpdateRoomType} className="bg-[#0f172a] border border-slate-800 p-8 rounded-3xl w-full max-w-[440px] shadow-2xl">
-            <h2 className="text-2xl font-bold mb-6 text-white">Edit Category Settings</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Category Name</label>
-                <input
-                  type="text"
-                  value={editTypeData.category || ""}
-                  onChange={(e) => setEditTypeData({ ...editTypeData, category: e.target.value })}
-                  className="w-full bg-[#020617] border border-slate-700 rounded-xl px-4 py-2.5 text-white outline-none focus:border-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Rent Amount</label>
-                <input
-                  type="number"
-                  value={editTypeData.rent || ""}
-                  onChange={(e) => setEditTypeData({ ...editTypeData, rent: e.target.value })}
-                  className="w-full bg-[#020617] border border-slate-700 rounded-xl px-4 py-2.5 text-white outline-none focus:border-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Climatic System Type</label>
-                <select
-                  value={editTypeData.is_ac || "AC"}
-                  onChange={(e) => setEditTypeData({ ...editTypeData, is_ac: e.target.value as "AC" | "NON_AC" })}
-                  className="w-full bg-[#020617] border border-slate-700 rounded-xl px-4 py-2.5 text-white outline-none focus:border-blue-500"
-                >
-                  <option value="AC">Air Conditioned</option>
-                  <option value="NON_AC">Non-AC</option>
-                </select>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4 mt-8">
-              <button type="button" onClick={() => setIsEditingType(false)} className="bg-slate-800 text-white py-2.5 rounded-xl text-sm">Cancel</button>
-              <button type="submit" className="bg-blue-600 text-white py-2.5 rounded-xl text-sm font-semibold">Save Changes</button>
-            </div>
-          </form>
-        </div>
-      )}
-
-    </div>
-  );
+        </form>
+    );
 }

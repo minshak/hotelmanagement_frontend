@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import api from "../lib/api";
-import { Pencil, Trash2Pencil, Trash2, Plus, Eye } from "lucide-react";
+import { Pencil, Trash2, Plus, Eye } from "lucide-react";
 
 interface Customer {
   id: number;
@@ -74,7 +74,7 @@ export default function CustomerManagement() {
       email: customer.email,
       address: customer.address,
       id_type: customer.id_type,
-      id_proof: null,
+      id_proof: null, // Keep null because no NEW file is selected yet
     });
 
     setOpenModal(true);
@@ -131,28 +131,29 @@ export default function CustomerManagement() {
       console.error(error);
     }
   };
-const filteredCustomers = [...customers]
-  .filter(
-    (customer) =>
-      customer.customer_name
-        .toLowerCase()
-        .includes(search.toLowerCase()) ||
-      customer.mobile_no.includes(search) ||
-      customer.customer_code
-        .toLowerCase()
-        .includes(search.toLowerCase())
-  )
-  .sort((a, b) => {
-    if (sortOrder === "asc") {
-      return a.customer_name.localeCompare(b.customer_name);
-    }
 
-    if (sortOrder === "desc") {
-      return b.customer_name.localeCompare(a.customer_name);
-    }
+  const filteredCustomers = [...customers]
+    .filter(
+      (customer) =>
+        customer.customer_name
+          .toLowerCase()
+          .includes(search.toLowerCase()) ||
+        customer.mobile_no.includes(search) ||
+        customer.customer_code
+          .toLowerCase()
+          .includes(search.toLowerCase())
+    )
+    .sort((a, b) => {
+      if (sortOrder === "asc") {
+        return a.customer_name.localeCompare(b.customer_name);
+      }
 
-    return 0; 
-  });
+      if (sortOrder === "desc") {
+        return b.customer_name.localeCompare(b.customer_name);
+      }
+
+      return 0; 
+    });
 
   return (
     <div className="p-6 bg-[#020b2d] min-h-screen text-white">
@@ -167,34 +168,35 @@ const filteredCustomers = [...customers]
           Add Customer
         </button>
       </div>
-<div className="flex gap-3 mb-4">
-  <input
-    placeholder="Search customer..."
-    value={search}
-    onChange={(e) => setSearch(e.target.value)}
-    className="flex-1 p-3 rounded-lg bg-slate-800"
-  />
 
-  <select
-    value={sortOrder}
-    onChange={(e) =>
-      setSortOrder(
-        e.target.value as "default" | "asc" | "desc"
-      )
-    }
-    className="p-3 rounded-lg bg-slate-800"
-  >
-    <option value="default">
-      Customer Arrival Order
-    </option>
-    <option value="asc">
-      Customer Name (A-Z)
-    </option>
-    <option value="desc">
-      Customer Name (Z-A)
-    </option>
-  </select>
-</div>
+      <div className="flex gap-3 mb-4">
+        <input
+          placeholder="Search customer..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="flex-1 p-3 rounded-lg bg-slate-800"
+        />
+
+        <select
+          value={sortOrder}
+          onChange={(e) =>
+            setSortOrder(
+              e.target.value as "default" | "asc" | "desc"
+            )
+          }
+          className="p-3 rounded-lg bg-slate-800"
+        >
+          <option value="default">
+            Customer Arrival Order
+          </option>
+          <option value="asc">
+            Customer Name (A-Z)
+          </option>
+          <option value="desc">
+            Customer Name (Z-A)
+          </option>
+        </select>
+      </div>
       
       <div className="overflow-auto rounded-xl">
         <table className="w-full border-collapse">
@@ -315,18 +317,35 @@ const filteredCustomers = [...customers]
                 <option value="PASSPORT">Passport</option>
               </select>
 
-              {/* FILE UPLOAD */}
-              <input
-                type="file"
-                accept="image/*,.pdf"
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    id_proof: e.target.files?.[0] || null,
-                  })
-                }
-                className="w-full p-3 bg-slate-800 rounded"
-              />
+              {/* FILE UPLOAD & PREVIEW */}
+              <div className="space-y-1">
+                <input
+                  type="file"
+                  accept="image/*,.pdf"
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      id_proof: e.target.files?.[0] || null,
+                    })
+                  }
+                  className="w-full p-3 bg-slate-800 rounded"
+                />
+                
+                {/* Visual feedback for existing file URL */}
+                {editingCustomer && editingCustomer.id_proof && !formData.id_proof && (
+                  <p className="text-xs text-gray-400 px-1 mt-1">
+                    Current file:{" "}
+                    <a
+                      href={editingCustomer.id_proof}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-blue-400 underline inline-flex items-center gap-1 hover:text-blue-300"
+                    >
+                      View Document <Eye size={12} />
+                    </a>
+                  </p>
+                )}
+              </div>
             </div>
 
             <div className="flex gap-3 mt-5">

@@ -45,6 +45,7 @@ export default function LoginPage() {
         localStorage.setItem("access", data.access);
         localStorage.setItem("refresh", data.refresh);
         localStorage.setItem("isLoggedIn", "true");
+        localStorage.setItem("username", username);
 
         router.push("/dashboard");
       } else {

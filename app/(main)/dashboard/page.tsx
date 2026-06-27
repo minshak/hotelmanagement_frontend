@@ -21,10 +21,10 @@ export default function Dashboard() {
   const [isOffline, setIsOffline] = useState(false);
 
   // Stats State
-  const [totalRevenue, setTotalRevenue] = useState("$124.5K");
-  const [occupancyRate, setOccupancyRate] = useState("88%");
-  const [avgDailyRate, setAvgDailyRate] = useState("$245");
-  const [revPAR, setRevPAR] = useState("$215");
+  const [totalRooms, setTotalRooms] = useState(0);
+  const [availableRooms, setAvailableRooms] = useState(0);
+  const [occupiedRooms, setOccupiedRooms] = useState(0);
+  const [totalCustomers, setTotalCustomers] = useState(0);
   const [bookings, setBookings] = useState<DashboardBooking[]>([]);
 
   // Authentication check
@@ -85,35 +85,17 @@ export default function Dashboard() {
       // Sort bookings (newest check-ins first) and cap at 5
       setBookings(formattedBookings.slice(0, 5));
 
-      // 2. Occupancy Rate
+      // 2. Calculate Room Stats
       const totalRoomsCount = roomsList.length;
-      const occupiedRoomsCount = roomsList.filter(r => r.status === "OCCUPIED").length;
-      const rate = totalRoomsCount > 0 ? Math.round((occupiedRoomsCount / totalRoomsCount) * 100) : 0;
-      setOccupancyRate(`${rate}%`);
+      const occupiedRoomsCount = roomsList.filter(r => r.status === "OCCUPIED" || r.status === "occupied").length;
+      const availableRoomsCount = totalRoomsCount - occupiedRoomsCount;
+      
+      setTotalRooms(totalRoomsCount);
+      setOccupiedRooms(occupiedRoomsCount);
+      setAvailableRooms(availableRoomsCount);
 
-      // 3. Total Revenue
-      let revenueSum = 0;
-      checkinsList.forEach(ci => {
-        const advance = parseFloat(ci.advance_amount) || 0;
-        const pending = parseFloat(ci.pending_amount) || 0;
-        revenueSum += (advance + pending);
-      });
-
-      if (revenueSum >= 1000) {
-        setTotalRevenue(`$${(revenueSum / 1000).toFixed(1)}K`);
-      } else {
-        setTotalRevenue(`$${revenueSum.toFixed(2)}`);
-      }
-
-      // 4. Average Daily Rate (ADR)
-      // ADR = Total Room Revenue / Number of Rooms Sold (using $245 as fallback base)
-      const mockBaseRent = 150;
-      setAvgDailyRate(`$${mockBaseRent}`);
-
-      // 5. RevPAR
-      // RevPAR = ADR * Occupancy Rate
-      const calculatedRevPar = Math.round(mockBaseRent * (rate / 100));
-      setRevPAR(`$${calculatedRevPar}`);
+      // 3. Total Customers
+      setTotalCustomers(customersList.length);
 
     } catch (error) {
       console.warn("Backend API is offline. Loading mock dashboard data.", error);
@@ -146,10 +128,10 @@ export default function Dashboard() {
           status: "Confirmed",
         },
       ]);
-      setTotalRevenue("$124.5K");
-      setOccupancyRate("88%");
-      setAvgDailyRate("$245");
-      setRevPAR("$215");
+      setTotalRooms(24);
+      setAvailableRooms(6);
+      setOccupiedRooms(18);
+      setTotalCustomers(45);
     } finally {
       setLoading(false);
     }
@@ -209,27 +191,27 @@ export default function Dashboard() {
         {/* Stats Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mt-8">
           <div className="bg-[#161E35] border border-white/5 rounded-2xl p-5 hover:border-blue-500/20 transition duration-300">
-            <p className="text-slate-400 text-sm font-semibold tracking-wider uppercase">Total Revenue</p>
-            <h2 className="text-3xl font-bold mt-2 text-white">{totalRevenue}</h2>
-            <p className="text-green-400 text-sm mt-1 font-medium">+18% vs prev</p>
+            <p className="text-slate-400 text-sm font-semibold tracking-wider uppercase">Total Rooms</p>
+            <h2 className="text-3xl font-bold mt-2 text-white">{totalRooms}</h2>
+            <p className="text-blue-400 text-sm mt-1 font-medium">Hotel Capacity</p>
           </div>
 
           <div className="bg-[#161E35] border border-white/5 rounded-2xl p-5 hover:border-blue-500/20 transition duration-300">
-            <p className="text-slate-400 text-sm font-semibold tracking-wider uppercase">Occupancy Rate</p>
-            <h2 className="text-3xl font-bold mt-2 text-white">{occupancyRate}</h2>
-            <p className="text-green-400 text-sm mt-1 font-medium">+6% vs prev</p>
+            <p className="text-slate-400 text-sm font-semibold tracking-wider uppercase">Available Rooms</p>
+            <h2 className="text-3xl font-bold mt-2 text-white">{availableRooms}</h2>
+            <p className="text-green-400 text-sm mt-1 font-medium">Ready for check-in</p>
           </div>
 
           <div className="bg-[#161E35] border border-white/5 rounded-2xl p-5 hover:border-blue-500/20 transition duration-300">
-            <p className="text-slate-400 text-sm font-semibold tracking-wider uppercase">Avg Daily Rate</p>
-            <h2 className="text-3xl font-bold mt-2 text-white">{avgDailyRate}</h2>
-            <p className="text-slate-400 text-sm mt-1">Weighted Average</p>
+            <p className="text-slate-400 text-sm font-semibold tracking-wider uppercase">Occupied Rooms</p>
+            <h2 className="text-3xl font-bold mt-2 text-white">{occupiedRooms}</h2>
+            <p className="text-amber-400 text-sm mt-1 font-medium">Currently filled</p>
           </div>
 
           <div className="bg-[#161E35] border border-white/5 rounded-2xl p-5 hover:border-blue-500/20 transition duration-300">
-            <p className="text-slate-400 text-sm font-semibold tracking-wider uppercase">RevPAR</p>
-            <h2 className="text-3xl font-bold mt-2 text-white">{revPAR}</h2>
-            <p className="text-slate-400 text-sm mt-1">Per Available Room</p>
+            <p className="text-slate-400 text-sm font-semibold tracking-wider uppercase">Total Customers</p>
+            <h2 className="text-3xl font-bold mt-2 text-white">{totalCustomers}</h2>
+            <p className="text-purple-400 text-sm mt-1 font-medium">Registered Guests</p>
           </div>
         </div>
 
