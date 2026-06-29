@@ -47,11 +47,6 @@ export default function SideBar() {
             Dashboard
           </Link>
 
-          <Link href="/bookings" className={getLinkClass("/bookings")}>
-            <Calendar size={18} />
-            Bookings
-          </Link>
-
           <Link href="/customers" className={getLinkClass("/customers")}>
             <UserCircle size={18} />
             Customers
@@ -69,11 +64,6 @@ export default function SideBar() {
           <Link href="/checkout" className={getLinkClass("/checkout")}>
             <LogOut size={18} />
             Check Out
-          </Link>
-
-          <Link href="/analytics" className={getLinkClass("/analytics")}>
-            <BarChart3 size={18} />
-            Analytics
           </Link>
         </div>
       </div>

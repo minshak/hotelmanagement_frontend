@@ -1,45 +1,109 @@
 import axios from "axios";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api";
-
-const api = axios.create({
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api";
+export const api = axios.create({
   baseURL: API_URL,
+  headers: {
+    "Content-Type": "application/json",
+  },
 });
 
-// Request Interceptor: Attach the bearer token safely
+/* ===================== REQUEST INTERCEPTOR ===================== */
+
 api.interceptors.request.use(
   (config) => {
     if (typeof window !== "undefined") {
       const token = localStorage.getItem("access");
+
       if (token) {
-        // Fallback-safe approach for attaching headers across all Axios versions
-        config.headers = config.headers || {};
-        config.headers["Authorization"] = `Bearer ${token}`;
+        config.headers.Authorization = `Bearer ${token}`;
       }
     }
+
     return config;
   },
-  (error) => {
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
 
-// Response Interceptor: Handle 401 Unauthorized globally
+/* ===================== RESPONSE INTERCEPTOR ===================== */
+
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response && error.response.status === 401) {
-      console.warn("Unauthorized request! Token may be expired or missing.");
+    if (
+      error.response &&
+      error.response.status === 401 &&
+      typeof window !== "undefined"
+    ) {
+      console.warn("Session expired");
 
-      if (typeof window !== "undefined") {
-        // Optional: Clear expired tokens and boot user to login page
-        localStorage.removeItem("access");
-        // window.location.href = "/"; 
-      }
+      localStorage.removeItem("access");
+      localStorage.removeItem("refresh");
+      localStorage.removeItem("user");
+
+      window.location.href = "/login";
     }
+
     return Promise.reject(error);
   }
 );
+
+/* ===================== LOGIN ===================== */
+
+export interface LoginPayload {
+  code: string;
+  password: string;
+}
+
+export interface LoginResponse {
+  refresh: string;
+  access: string;
+  status: boolean;
+  message: string;
+  user: {
+    id: number;
+    name: string;
+    code: string;
+    email: string;
+    mobile: string;
+    gstin: string;
+    logo: string;
+    is_superuser: boolean;
+    is_staff: boolean;
+    active: boolean;
+  };
+}
+
+export const login = async (
+  data: LoginPayload
+): Promise<LoginResponse> => {
+  const response = await api.post<LoginResponse>(
+    "/account/auth/login/",
+    data
+  );
+
+  if (typeof window !== "undefined") {
+    localStorage.setItem("access", response.data.access);
+    localStorage.setItem("refresh", response.data.refresh);
+    localStorage.setItem(
+      "user",
+      JSON.stringify(response.data.user)
+    );
+  }
+
+  return response.data;
+};
+
+/* ===================== LOGOUT ===================== */
+
+export const logout = () => {
+  localStorage.removeItem("access");
+  localStorage.removeItem("refresh");
+  localStorage.removeItem("user");
+
+  window.location.href = "/login";
+};
 
 /* ============================ TYPES ============================ */
 export interface RoomType {
@@ -209,7 +273,7 @@ export const updateCheckout = async (
   const response = await api.patch<Checkout>(`/reservations/checkouts/`, checkoutData);
   return response.data;
 };
+
 export const deleteCheckout = async (): Promise<void> => {
   await api.delete(`/reservations/checkouts/`);
 };
-export default api;

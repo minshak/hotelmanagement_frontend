@@ -1,16 +1,16 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import api, { getRooms, getRoomTypes } from "../lib/api";
-import { Users, Receipt, Calendar, Clock, CreditCard, ChevronLeft, Banknote, Percent, CheckCircle2, History } from "lucide-react";
+import { api, getRooms, getRoomTypes } from "../lib/api";
+import { Users, Receipt, Calendar, Clock, CreditCard, ChevronLeft, Banknote, Percent, CheckCircle2, History, X, Download } from "lucide-react";
 
 interface CheckInRecord {
   id: number;
   customer_name?: string;
   mobile_no?: string;
   room_no?: string;
-  checkin_date?: string; // Format: YYYY-MM-DD
-  checkin_time?: string; // Format: HH:MM
+  checkin_date?: string; 
+  checkin_time?: string; 
   advance_amount?: number;
   pay_mode?: string;
   status?: string;
@@ -18,7 +18,7 @@ interface CheckInRecord {
 
 interface CheckoutRecord {
   id: number;
-  checkin: number | CheckInRecord; // Can be ID or nested object based on serializer
+  checkin: number | CheckInRecord; 
   checkout_date: string;
   checkout_time: string;
   total_days: number;
@@ -26,7 +26,6 @@ interface CheckoutRecord {
   discount_amount?: string;
   pay_mode: string;
   remarks?: string;
-  // Fallbacks for flattened or custom serialized properties
   room_no?: string;
   customer_name?: string;
 }
@@ -41,16 +40,46 @@ interface Room {
 
 interface RoomType {
   id: number;
-  name: string;
-  rent: number;
+  category: string;
+  is_ac: string;
+  rent: string;
+  active: boolean;
+}
+
+interface ReceiptPayload {
+  receipt_no: string;
+  generated_at: string;
+  customer: { name: string };
+  stay_details: {
+    room_no: string;
+    room_type: string;
+    checkin_datetime: string;
+    checkout_datetime: string;
+    total_days: number;
+  };
+  financial_breakdown: {
+    base_daily_rent: number;
+    subtotal: number;
+    advance_paid: number;
+    balance_paid: number;
+    total_amount_charged: number;
+    payment_mode: string;
+  };
+  remarks: string;
 }
 
 export default function GuestCheckout() {
   const [checkins, setCheckins] = useState<CheckInRecord[]>([]);
-  const [checkouts, setCheckouts] = useState<CheckoutRecord[]>([]); // New Checkout History State
+  const [checkouts, setCheckouts] = useState<CheckoutRecord[]>([]); 
   const [rooms, setRooms] = useState<Room[]>([]);
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
   const [selectedRecord, setSelectedRecord] = useState<CheckInRecord | null>(null);
+
+  // Receipt Modal State
+  const [receiptData, setReceiptData] = useState<ReceiptPayload | null>(null);
+  const [isFetchingReceipt, setIsFetchingReceipt] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [activeCheckoutId, setActiveCheckoutId] = useState<number | null>(null);
 
   // Checkout Form State
   const [checkoutDate, setCheckoutDate] = useState("");
@@ -60,7 +89,6 @@ export default function GuestCheckout() {
   const [discount, setDiscount] = useState<string>("0");
   const [amountPaid, setAmountPaid] = useState<string>("");
 
-  // Initialize date & time on client side to prevent Next.js SSR hydration mismatches
   useEffect(() => {
     setCheckoutDate(new Date().toISOString().split("T")[0]);
     setCheckoutTime(
@@ -68,13 +96,11 @@ export default function GuestCheckout() {
     );
   }, []);
 
-  // Synchronized Data Fetching pipeline
   const fetchInitialData = async () => {
     try {
       const checkinRes = await api.get("/reservations/checkins/");
       setCheckins(checkinRes.data || []);
 
-      // Fetch Checkout history list from backend viewset
       const checkoutRes = await api.get("/reservations/checkouts/");
       setCheckouts(checkoutRes.data || []);
 
@@ -92,7 +118,6 @@ export default function GuestCheckout() {
     fetchInitialData();
   }, []);
 
-  // Sort Checkins by Room Number Alpha-Numerically
   const sortedCheckins = useMemo(() => {
     return [...checkins].sort((a, b) => {
       const roomA = a.room_no || "";
@@ -101,17 +126,13 @@ export default function GuestCheckout() {
     });
   }, [checkins]);
 
-  // Find Room daily rent dynamically cross-referenced through RoomType mappings
   const currentRoomRent = useMemo(() => {
     if (!selectedRecord) return 0;
-
     const room = rooms.find((r) => String(r.room_no) === String(selectedRecord.room_no));
     const roomType = roomTypes.find((t) => t.id === room?.room_type);
-
     return roomType ? Number(roomType.rent) : 0;
   }, [selectedRecord, rooms, roomTypes]);
 
-  // Aligned with backend calculation logic: max(1, ceil(hours / 24))
   const billingCalculations = useMemo(() => {
     if (!selectedRecord || !selectedRecord.checkin_date || !selectedRecord.checkin_time || !checkoutDate || !checkoutTime) {
       return { totalDays: 0, totalAmount: 0, balanceAmount: 0 };
@@ -119,7 +140,6 @@ export default function GuestCheckout() {
 
     const checkInDateTime = new Date(`${selectedRecord.checkin_date}T${selectedRecord.checkin_time}`);
     const checkOutDateTime = new Date(`${checkoutDate}T${checkoutTime}`);
-
     const diffInMs = checkOutDateTime.getTime() - checkInDateTime.getTime();
     const advancePaid = Number(selectedRecord.advance_amount) || 0;
 
@@ -132,14 +152,9 @@ export default function GuestCheckout() {
     const totalAmount = calculatedDays * currentRoomRent;
     const balanceAmount = totalAmount - advancePaid;
 
-    return {
-      totalDays: calculatedDays,
-      totalAmount,
-      balanceAmount,
-    };
+    return { totalDays: calculatedDays, totalAmount, balanceAmount };
   }, [selectedRecord, checkoutDate, checkoutTime, currentRoomRent]);
 
-  // Sync amountPaid value whenever the calculated balance or discount updates
   useEffect(() => {
     if (selectedRecord) {
       const totalDiscount = parseFloat(discount) || 0;
@@ -159,7 +174,52 @@ export default function GuestCheckout() {
     setRemarks("");
   };
 
-  // Handle Form Submission
+  const handleFetchReceipt = async (checkoutId: number) => {
+    setIsFetchingReceipt(true);
+    setActiveCheckoutId(checkoutId);
+    try {
+      const response = await api.get(`/reservations/checkouts/${checkoutId}/receipt/`);
+      setReceiptData(response.data);
+    } catch (err) {
+      console.error("Receipt generation error:", err);
+      alert("Could not load receipt documentation for this record.");
+    } finally {
+      setIsFetchingReceipt(false);
+    }
+  };
+
+  // NEW DOWNLOAD LOGIC
+  const handleDownloadReceipt = async () => {
+    if (!activeCheckoutId) return;
+    setIsDownloadingPdf(true);
+    try {
+      // It's critical to tell axios to handle this as a binary blob
+      const response = await api.get(`/reservations/checkouts/${activeCheckoutId}/download-receipt/`, {
+        responseType: 'blob',
+      });
+
+      // Process raw data into a local downloadeable object URL
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      
+      // Auto formatting file title standard matching backend
+      link.setAttribute('download', `Receipt_REC-${String(activeCheckoutId).padStart(6, '0')}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      
+      // Clean up DOM objects safely
+      link.parentNode?.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("PDF download execution error:", err);
+      alert("Failed to compile and download your PDF invoice file.");
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
+
   const handleSaveCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedRecord) return;
@@ -169,7 +229,7 @@ export default function GuestCheckout() {
     const expectedNetBalance = parseFloat((billingCalculations.balanceAmount - currentDiscount).toFixed(2));
 
     if (enteredAmount !== expectedNetBalance) {
-      alert(`Payment Validation Error: The entered Amount Paid (₹${enteredAmount}) must exactly match the Balance Payable Due minus Discount (₹${expectedNetBalance}).`);
+      alert(`Payment Validation Error: Entered Amount (₹${enteredAmount}) must exactly match Balance Due minus Discount (₹${expectedNetBalance}).`);
       return;
     }
 
@@ -185,20 +245,107 @@ export default function GuestCheckout() {
         remarks: remarks,
       };
 
-      const checkoutEndpoint = "/reservations/checkouts/";
-      await api.post(checkoutEndpoint, payload);
-
+      await api.post("/reservations/checkouts/", payload);
       alert("Checkout processed successfully!");
       setSelectedRecord(null);
       await fetchInitialData();
     } catch (err) {
       console.error("Checkout submission failure:", err);
-      alert("Failed to submit checkout payload. Verify your API base path endpoint configuration.");
+      alert("Failed to submit checkout payload.");
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#020b2d] p-8 text-white">
+    <div className="min-h-screen bg-[#020b2d] p-8 text-white relative">
+      
+      {/* CONDITIONAL DYNAMIC MODAL: RECEIPT VIEWER */}
+      {receiptData && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border border-slate-800 text-slate-100 max-w-lg w-full rounded-2xl shadow-2xl p-6 relative space-y-4 font-sans">
+            <button 
+              onClick={() => {
+                setReceiptData(null);
+                setActiveCheckoutId(null);
+              }}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white transition"
+            >
+              <X size={20} />
+            </button>
+            
+            <div className="text-center border-b border-slate-800 pb-4">
+              <h3 className="text-xl font-bold tracking-wide text-emerald-400 flex items-center justify-center gap-2">
+                <Receipt size={22} /> INVOICE RECEIPT
+              </h3>
+              <p className="text-xs font-mono text-slate-400 mt-1">{receiptData.receipt_no}</p>
+            </div>
+
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between border-b border-slate-800/40 pb-2">
+                <span className="text-slate-400">Guest Name</span>
+                <span className="font-semibold text-white">{receiptData.customer.name}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-4 bg-slate-950/40 p-3 rounded-xl border border-slate-800/60 text-xs">
+                <div>
+                  <span className="text-slate-500 block mb-0.5">ROOM / TYPE</span>
+                  <span className="text-slate-200 font-medium">Room {receiptData.stay_details.room_no} ({receiptData.stay_details.room_type})</span>
+                </div>
+                <div>
+                  <span className="text-slate-500 block mb-0.5">TOTAL DURATION</span>
+                  <span className="text-yellow-400 font-bold">{receiptData.stay_details.total_days} Day(s)</span>
+                </div>
+                <div className="col-span-2 pt-1">
+                  <span className="text-slate-500 block mb-0.5">STAY TIMELINE</span>
+                  <span className="text-slate-300 font-mono text-[11px] block">In: {receiptData.stay_details.checkin_datetime}</span>
+                  <span className="text-slate-300 font-mono text-[11px] block">Out: {receiptData.stay_details.checkout_datetime}</span>
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-2 text-xs font-mono">
+                <div className="flex justify-between text-slate-400">
+                  <span>Daily Room Tariff</span>
+                  <span>₹{receiptData.financial_breakdown.base_daily_rent.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>Gross Subtotal</span>
+                  <span>₹{receiptData.financial_breakdown.subtotal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-blue-400">
+                  <span>(-) Deposit Advance</span>
+                  <span>₹{receiptData.financial_breakdown.advance_paid.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-emerald-400 border-t border-slate-800 pt-2 text-sm font-bold">
+                  <span>Balance Cleared ({receiptData.financial_breakdown.payment_mode})</span>
+                  <span>₹{receiptData.financial_breakdown.balance_paid.toFixed(2)}</span>
+                </div>
+              </div>
+
+              <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800 text-xs text-center text-slate-400 italic mt-4">
+                "{receiptData.remarks}"
+              </div>
+            </div>
+
+            {/* TWO BUTTON FOOTER GRID FOR ACTIONS */}
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button 
+                onClick={() => window.print()}
+                className="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-2.5 rounded-xl transition"
+              >
+                PRINT SCREEN
+              </button>
+              
+              <button 
+                onClick={handleDownloadReceipt}
+                disabled={isDownloadingPdf}
+                className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-800 text-white text-xs font-bold py-2.5 rounded-xl transition flex items-center justify-center gap-2"
+              >
+                <Download size={14} /> 
+                {isDownloadingPdf ? "DOWNLOADING..." : "DOWNLOAD PDF"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {!selectedRecord ? (
         /* SCREEN A: ACTIVE DASHBOARD WITH CHECKOUT HISTORY LIST UNDERNEATH */
         <div className="max-w-6xl mx-auto space-y-8">
@@ -237,6 +384,7 @@ export default function GuestCheckout() {
                         </td>
                         <td className="p-4 text-center">
                           <button
+                            type="button"
                             onClick={() => handleOpenCheckout(item)}
                             className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2 rounded-xl text-xs transition shadow-md shadow-emerald-950"
                           >
@@ -257,7 +405,7 @@ export default function GuestCheckout() {
             </div>
           </div>
 
-          {/* NEW SECTION: HISTORICAL CHECKOUTS LIST FROM BACKEND */}
+          {/* CHECKOUT LOG & HISTORY WITH RECEIPT ACTION CONTROL */}
           <div className="bg-[#0d1735] p-6 rounded-2xl border border-blue-900">
             <h2 className="text-2xl font-bold mb-6 flex items-center gap-2 text-emerald-400">
               <History /> Checkout Log & History
@@ -272,13 +420,12 @@ export default function GuestCheckout() {
                     <th className="p-4">Duration</th>
                     <th className="p-4">Settled Amount</th>
                     <th className="p-4">Pay Mode</th>
-                    <th className="p-4 text-center">Status</th>
+                    <th className="p-4 text-center">Invoice Documentation</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-blue-900/30 text-sm">
                   {checkouts.length > 0 ? (
                     checkouts.map((out) => {
-                      // Safe nested mapping if backend serializes the complete checkin record nested style
                       const nestedCheckin = typeof out.checkin === "object" ? out.checkin : null;
                       const displayRoom = nestedCheckin?.room_no || out.room_no || "N/A";
                       const displayName = nestedCheckin?.customer_name || out.customer_name || "Archived Guest";
@@ -306,10 +453,18 @@ export default function GuestCheckout() {
                               {out.pay_mode}
                             </span>
                           </td>
-                          <td className="p-4 text-center">
+                          <td className="p-4 text-center flex items-center justify-center gap-3">
                             <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                              <CheckCircle2 size={12} /> CHECKED_OUT
+                              <CheckCircle2 size={12} /> SETTLED
                             </span>
+                            <button
+                              type="button"
+                              disabled={isFetchingReceipt}
+                              onClick={() => handleFetchReceipt(out.id)}
+                              className="bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white border border-blue-500/30 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 disabled:opacity-50"
+                            >
+                              <Receipt size={13} /> RECEIPT
+                            </button>
                           </td>
                         </tr>
                       );

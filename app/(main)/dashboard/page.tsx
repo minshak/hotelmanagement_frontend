@@ -19,6 +19,9 @@ export default function Dashboard() {
   const [authLoading, setAuthLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
+  
+  // User Profile State
+  const [userName, setUserName] = useState("Guest");
 
   // Stats State
   const [totalRooms, setTotalRooms] = useState(0);
@@ -27,12 +30,25 @@ export default function Dashboard() {
   const [totalCustomers, setTotalCustomers] = useState(0);
   const [bookings, setBookings] = useState<DashboardBooking[]>([]);
 
-  // Authentication check
+  // Authentication check & Fetch User Data
   useEffect(() => {
     const isLoggedIn = localStorage.getItem("isLoggedIn");
+    const storedUser = localStorage.getItem("user");
+
     if (isLoggedIn !== "true") {
       router.replace("/");
     } else {
+      // Parse the user object and extract the name safely
+      if (storedUser) {
+        try {
+          const parsedUser = JSON.parse(storedUser);
+          if (parsedUser && parsedUser.name) {
+            setUserName(parsedUser.name);
+          }
+        } catch (error) {
+          console.error("Error parsing user data from localStorage", error);
+        }
+      }
       Promise.resolve().then(() => setAuthLoading(false));
     }
   }, [router]);
@@ -50,7 +66,6 @@ export default function Dashboard() {
       setIsOffline(false);
 
       // 1. Calculate Recent Bookings
-      // Create quick lookups
       const roomMap = new Map<number, string>();
       roomsList.forEach(r => roomMap.set(r.id, r.room_no));
 
@@ -58,7 +73,6 @@ export default function Dashboard() {
       customersList.forEach(c => customerMap.set(c.id, c.customer_name));
 
       const formattedBookings: DashboardBooking[] = checkinsList.map(ci => {
-        // format date from YYYY-MM-DD to MMM DD, YYYY
         let dateStr = ci.checkin_date;
         try {
           const parts = ci.checkin_date.split("-");
@@ -82,12 +96,11 @@ export default function Dashboard() {
         };
       });
 
-      // Sort bookings (newest check-ins first) and cap at 5
       setBookings(formattedBookings.slice(0, 5));
 
       // 2. Calculate Room Stats
       const totalRoomsCount = roomsList.length;
-      const occupiedRoomsCount = roomsList.filter(r => r.status === "OCCUPIED" || r.status === "occupied").length;
+      const occupiedRoomsCount = roomsList.filter(r => r.status === "OCCUPIED").length;
       const availableRoomsCount = totalRoomsCount - occupiedRoomsCount;
       
       setTotalRooms(totalRoomsCount);
@@ -101,7 +114,6 @@ export default function Dashboard() {
       console.warn("Backend API is offline. Loading mock dashboard data.", error);
       setIsOffline(true);
 
-      // Set fallback mock data
       setBookings([
         {
           guest: "Ethan James",
@@ -133,7 +145,7 @@ export default function Dashboard() {
       setOccupiedRooms(18);
       setTotalCustomers(45);
     } finally {
-      setLoading(false);
+      loading && setLoading(false);
     }
   };
 
@@ -145,6 +157,9 @@ export default function Dashboard() {
 
   const handleLogout = () => {
     localStorage.removeItem("isLoggedIn");
+    localStorage.removeItem("access");
+    localStorage.removeItem("refresh");
+    localStorage.removeItem("user");
     router.push("/");
   };
 
@@ -161,18 +176,15 @@ export default function Dashboard() {
 
   return (
     <div className="bg-[#0B1020] text-white min-h-screen">
-      {/* Main Content */}
       <main className="flex-1 p-8 overflow-y-auto">
-        <TopBar handleLogout={handleLogout} />
+        <TopBar />
+        
         {/* Heading & Status indicator */}
         <div className="flex justify-between items-center mt-8">
           <div>
-            <h1 className="text-5xl font-bold">Morning, Heba.</h1>
-            <p className="text-slate-400 mt-2">
-              Your properties are performing
-              <span className="text-blue-400 font-semibold"> {isOffline ? "12% better" : "smoothly"} </span>
-              than last week.
-            </p>
+            {/* DYNAMIC WELCOME GREETING */}
+            <h1 className="text-5xl font-bold">Welcome, {userName}.</h1>
+           
           </div>
 
           <div>

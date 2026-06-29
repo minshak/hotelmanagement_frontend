@@ -1,11 +1,13 @@
 "use client";
-import axios from "axios";
+
 import { useState, useEffect } from "react";
 import { User, Lock, Eye, EyeOff, Star } from "lucide-react";
 import { useRouter } from "next/navigation";
+import axios from "axios";
+import { api, login } from "../lib/api"; 
 
 export default function LoginPage() {
-  const [username, setUsername] = useState("");
+  const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -19,9 +21,9 @@ export default function LoginPage() {
   }, [router]);
 
   const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault(); // Prevents page reload on form submission
+    e.preventDefault(); 
 
-    if (!username || !password) {
+    if (!code || !password) {
       setError("Please fill in all fields.");
       return;
     }
@@ -30,39 +32,37 @@ export default function LoginPage() {
       setError("");
       setLoading(true);
 
-      const response = await axios.post(
-        "http://localhost:8000/api/token/",
-        {
-          username,
-          password,
-        }
-      );
-      const data = response.data;
+      // Fixed: Now calling the named login function directly
+      const data = await login({ code, password });
 
       console.log("TOKEN RESPONSE:", data);
 
-      if (data.access && data.refresh) {
-        localStorage.setItem("access", data.access);
-        localStorage.setItem("refresh", data.refresh);
+      // Your backend returns tokens and status inside the response structure
+      if (data?.status && data?.access) {
         localStorage.setItem("isLoggedIn", "true");
-        localStorage.setItem("username", username);
+
+        if (data.user) {
+          localStorage.setItem("code", data.user.code || "");
+          localStorage.setItem("name", data.user.name || "");
+          localStorage.setItem("logo", data.user.logo || "");
+        }
 
         router.push("/dashboard");
       } else {
-        setError("Invalid response structure from server");
+        setError(data?.message || "Login failed");
       }
-    } catch (error: unknown) {
-      console.error(error);
-if (axios.isAxiosError(error)) {
-  setError(
-    error.response?.data?.detail ||
-    error.response?.data?.message ||
-    "Invalid Username or Password"
-  );
-} else {
-  setError("Something went wrong");
-
-    }} finally {
+    } catch (err: unknown) {
+      console.error(err);
+      if (axios.isAxiosError(err)) {
+        setError(
+          err.response?.data?.detail ||
+          err.response?.data?.message ||
+          "Invalid Username or Password"
+        );
+      } else {
+        setError("Something went wrong");
+      }
+    } finally {
       setLoading(false);
     }
   };
@@ -92,9 +92,9 @@ if (axios.isAxiosError(error)) {
           Enter your credentials to access the command center.
         </p>
 
-        {/* Form elements wrapped for clean layout intercept validation */}
+        {/* Form elements */}
         <form onSubmit={handleLogin}>
-          {/* Username */}
+          {/* Username / Code input */}
           <div className="mt-8">
             <label className="text-gray-300 text-sm">Username</label>
 
@@ -103,8 +103,8 @@ if (axios.isAxiosError(error)) {
               <input
                 type="text"
                 placeholder="Property Manager ID"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                value={code} 
+                onChange={(e) => setCode(e.target.value)}
                 className="w-full bg-transparent p-3 outline-none text-white placeholder-gray-500"
               />
             </div>
@@ -158,8 +158,9 @@ if (axios.isAxiosError(error)) {
           <button
             type="submit"
             disabled={loading}
-            className={`w-full mt-6 py-3 rounded-xl bg-white/10 border border-white/20 backdrop-blur-md text-white font-semibold transition duration-300 ${loading ? "opacity-50 cursor-not-allowed" : "hover:bg-white/20"
-              }`}
+            className={`w-full mt-6 py-3 rounded-xl bg-white/10 border border-white/20 backdrop-blur-md text-white font-semibold transition duration-300 ${
+              loading ? "opacity-50 cursor-not-allowed" : "hover:bg-white/20"
+            }`}
           >
             {loading ? "Verifying Context..." : "Authorize Access"}
           </button>

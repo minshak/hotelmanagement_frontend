@@ -1,6 +1,17 @@
 "use client";
 import React, { useState, useEffect, useMemo, FormEvent } from 'react';
-import { Bed, Plus, ArrowLeft, X, Snowflake, DollarSign, Trash2, Pencil, Check } from 'lucide-react';
+import { 
+    getRooms, 
+    getRoomTypes, 
+    createRoom, 
+    updateRoom, 
+    deleteRoom, 
+    updateRoomType, 
+    createRoomType,
+    Room as ApiRoom, 
+    RoomType as ApiRoomType 
+} from '../lib/api';
+import { Bed, Plus, ArrowLeft, X, Snowflake, Trash2, Pencil, Check, DollarSign } from 'lucide-react';
 
 // Define strict interfaces for our state data
 interface Room {
@@ -20,17 +31,6 @@ interface RoomDraft {
     status: string;
 }
 
-const initialRooms: Room[] = [
-    { id: 1, number: '1001', type: 'Single', ac: true, rent: 1000, status: 'available' },
-    { id: 2, number: '1002', type: 'Single', ac: true, rent: 1000, status: 'occupied' },
-    { id: 3, number: '1003', type: 'Single', ac: true, rent: 1000, status: 'available' },
-    { id: 4, number: '2001', type: 'Double', ac: true, rent: 1800, status: 'available' },
-    { id: 5, number: '2002', type: 'Double', ac: false, rent: 1500, status: 'maintenance' },
-    { id: 6, number: '2003', type: 'Double', ac: true, rent: 1800, status: 'occupied' },
-    { id: 7, number: '3001', type: 'Suite', ac: true, rent: 3500, status: 'occupied' },
-    { id: 8, number: '3002', type: 'Suite', ac: true, rent: 3500, status: 'available' },
-];
-
 const THEMES = [
     { icon: 'bg-blue-500/15 text-blue-400', border: 'hover:border-blue-500/60' },
     { icon: 'bg-purple-500/15 text-purple-400', border: 'hover:border-purple-500/60' },
@@ -48,31 +48,66 @@ const STATUS = {
 const emptyDraft: RoomDraft = { number: '', type: '', ac: true, rent: '', status: 'available' };
 
 export default function RoomsManagement() {
-    const [rooms, setRooms] = useState<Room[]>(initialRooms);
+    const [rooms, setRooms] = useState<Room[]>([]);
+    const [apiRoomTypes, setApiRoomTypes] = useState<ApiRoomType[]>([]);
     const [selectedType, setSelectedType] = useState<string | null>(null);
     const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
+    const [editingRoomType, setEditingRoomType] = useState<ApiRoomType | null>(null);
+    const [draftRoomType, setDraftRoomType] = useState<Partial<ApiRoomType>>({});
     const [editing, setEditing] = useState<boolean>(false);
     const [draft, setDraft] = useState<RoomDraft>(emptyDraft);
     const [addOpen, setAddOpen] = useState<boolean>(false);
+
+    useEffect(() => {
+        loadData();
+    }, []);
+
+    const loadData = async () => {
+        try {
+            const [fetchedRooms, fetchedTypes] = await Promise.all([
+                getRooms(),
+                getRoomTypes()
+            ]);
+            setApiRoomTypes(fetchedTypes);
+
+            const mappedRooms: Room[] = fetchedRooms.map(r => {
+                const typeObj = fetchedTypes.find(t => t.id === r.room_type);
+                return {
+                    id: r.id,
+                    number: r.room_no,
+                    type: typeObj ? typeObj.category : (r.room_type_name || "Unknown"),
+                    ac: typeObj ? typeObj.is_ac === "AC" : false,
+                    // Prioritize room-specific rent if your API supports it, fallback to typeObj rent
+                    rent: (r as any).rent ? Number((r as any).rent) : (typeObj ? Number(typeObj.rent) : 0),
+                    status: r.status ? (r.status.toLowerCase() as Room['status']) : 'available'
+                };
+            });
+            setRooms(mappedRooms);
+        } catch (error) {
+            console.error("Failed to load rooms data", error);
+        }
+    };
 
     useEffect(() => {
         function onKey(e: KeyboardEvent) {
             if (e.key === 'Escape') {
                 setSelectedRoom(null);
                 setAddOpen(false);
+                setEditingRoomType(null);
             }
         }
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, []);
 
-    const types = useMemo(() => Array.from(new Set(rooms.map((r) => r.type))), [rooms]);
+    const types = useMemo(() => apiRoomTypes.map(t => t.category), [apiRoomTypes]);
 
-    const typeSummary = useMemo(() => types.map((t) => ({
-        type: t,
-        count: rooms.filter((r) => r.type === t).length,
-        available: rooms.filter((r) => r.type === t && r.status === 'available').length,
-    })), [types, rooms]);
+    const typeSummary = useMemo(() => apiRoomTypes.map((t) => ({
+        roomType: t,
+        type: t.category,
+        count: rooms.filter((r) => r.type === t.category).length,
+        available: rooms.filter((r) => r.type === t.category && r.status === 'available').length,
+    })), [apiRoomTypes, rooms]);
 
     const roomsInView = selectedType ? rooms.filter((r) => r.type === selectedType) : [];
 
@@ -81,21 +116,44 @@ export default function RoomsManagement() {
         setAddOpen(true);
     }
 
-    function submitAdd(e: FormEvent) {
+    // Helper function to resolve or create a Room Type based on user text entry
+    async function handleRoomTypeResolution(typeName: string): Promise<number> {
+        const trimmedName = typeName.trim();
+        let existingType = apiRoomTypes.find(t => t.category.toLowerCase() === trimmedName.toLowerCase());
+        
+        if (!existingType) {
+            // Automatically generate a new room type if the user typed an unlisted one
+            const newType = await createRoomType({
+                category: trimmedName,
+                is_ac: draft.ac ? "AC" : "NON_AC",
+                rent: draft.rent || "0",
+                active: true
+            });
+            return newType.id;
+        }
+        return existingType.id;
+    }
+
+    async function submitAdd(e: FormEvent) {
         e.preventDefault();
-        if (!draft.number.trim() || !draft.type.trim() || !draft.rent) return;
-        setRooms((prev) => [
-            ...prev,
-            {
-                id: Date.now(),
-                number: draft.number.trim(),
-                type: draft.type.trim(),
-                ac: draft.ac,
-                rent: Number(draft.rent),
-                status: draft.status as Room['status']
-            },
-        ]);
-        setAddOpen(false);
+        if (!draft.number.trim() || !draft.type.trim()) return;
+
+        try {
+            const roomTypeId = await handleRoomTypeResolution(draft.type);
+
+            await createRoom({
+                room_no: draft.number.trim(),
+                room_type: roomTypeId,
+                status: draft.status.toUpperCase() as any,
+                active: true,
+                ...({ rent: draft.rent } as any) // Passes room rent separately to the endpoint
+            });
+            await loadData();
+            setAddOpen(false);
+        } catch (error) {
+            console.error("Failed to create room", error);
+            alert("Failed to create room. Please try again.");
+        }
     }
 
     function openRoom(room: Room) {
@@ -104,7 +162,7 @@ export default function RoomsManagement() {
     }
 
     function startEdit() {
-        if (!selectedRoom) return; // Guard clause solves 'possibly null' issues
+        if (!selectedRoom) return;
         setDraft({
             number: selectedRoom.number,
             type: selectedRoom.type,
@@ -115,19 +173,59 @@ export default function RoomsManagement() {
         setEditing(true);
     }
 
-    function saveEdit(e: FormEvent) {
+    async function saveEdit(e: FormEvent) {
         e.preventDefault();
         if (!selectedRoom) return;
-        const updatedRent = Number(draft.rent);
 
-        setRooms((prev) => prev.map((r) => (r.id === selectedRoom.id ? { ...r, ...draft, rent: updatedRent, status: draft.status as Room['status'] } : r)));
-        setSelectedRoom((r) => r ? { ...r, ...draft, rent: updatedRent, status: draft.status as Room['status'] } : null);
-        setEditing(false);
+        try {
+            const roomTypeId = await handleRoomTypeResolution(draft.type);
+
+            const updatePayload: any = {
+                room_type: roomTypeId,
+                status: draft.status.toUpperCase(),
+                active: true,
+                rent: draft.rent // Updates room rent separately
+            };
+
+            if (draft.number.trim() !== selectedRoom.number) {
+                updatePayload.room_no = draft.number.trim();
+            }
+
+            await updateRoom(selectedRoom.id, updatePayload);
+            await loadData();
+            setSelectedRoom(null);
+            setEditing(false);
+        } catch (error: any) {
+            console.error("Failed to update room", error.response?.data || error);
+            const errMsg = error.response?.data ? JSON.stringify(error.response.data) : error.message;
+            alert(`Failed to update room: ${errMsg}`);
+        }
     }
 
-    function deleteRoom(id: number) {
-        setRooms((prev) => prev.filter((r) => r.id !== id));
-        setSelectedRoom(null);
+    async function deleteRoomId(id: number) {
+        try {
+            await deleteRoom(id);
+            await loadData();
+            setSelectedRoom(null);
+        } catch (error: any) {
+            console.error("Failed to delete room", error.response?.data || error);
+            const errMsg = error.response?.data ? JSON.stringify(error.response.data) : error.message;
+            alert(`Failed to delete room: ${errMsg}`);
+        }
+    }
+
+    async function saveRoomType(e: FormEvent) {
+        e.preventDefault();
+        if (!editingRoomType) return;
+        try {
+            await updateRoomType(editingRoomType.id, draftRoomType);
+            await loadData();
+            setEditingRoomType(null);
+        } catch (error: any) {
+            console.error("Failed to update room type", error.response?.data || error);
+            const errMsg = error.response?.data ? JSON.stringify(error.response.data) : error.message;
+            alert(`Failed to update room type: ${errMsg}`);
+        }
     }
 
     return (
@@ -151,7 +249,7 @@ export default function RoomsManagement() {
                         <p className="text-slate-400 text-sm mt-1">
                             {selectedType
                                 ? `${roomsInView.length} room${roomsInView.length === 1 ? '' : 's'} of this type`
-                                : 'Tap a room type to see every room, tap a room to see its details.'}
+                                : 'Hover a room type card to edit it or view its rooms.'}
                         </p>
                     </div>
                     <button
@@ -168,18 +266,36 @@ export default function RoomsManagement() {
                         {typeSummary.map((t, i) => {
                             const theme = THEMES[i % THEMES.length];
                             return (
-                                <button
+                                <div
                                     key={t.type}
-                                    onClick={() => setSelectedType(t.type)}
-                                    className={`text-left rounded-2xl border border-slate-700/60 bg-slate-900/70 p-5 transition-all hover:-translate-y-0.5 ${theme.border} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400`}
+                                    className={`group relative text-left rounded-2xl border border-slate-700/60 bg-slate-900/70 p-5 transition-all hover:-translate-y-0.5 ${theme.border}`}
                                 >
+                                    {/* Hover overlay */}
+                                    <div className="absolute inset-0 bg-slate-900/85 backdrop-blur-sm opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center gap-3 transition-opacity rounded-2xl z-10">
+                                        <button
+                                            onClick={() => {
+                                                setEditingRoomType(t.roomType);
+                                                setDraftRoomType({ category: t.roomType.category, rent: t.roomType.rent, is_ac: t.roomType.is_ac });
+                                            }}
+                                            className="bg-blue-600 hover:bg-blue-500 text-white font-medium py-2 px-4 rounded-xl flex items-center gap-2 text-sm w-3/4 justify-center transition-colors"
+                                        >
+                                            <Pencil size={15} /> Edit Type
+                                        </button>
+                                        <button
+                                            onClick={() => setSelectedType(t.type)}
+                                            className="bg-slate-700 hover:bg-slate-600 text-white font-medium py-2 px-4 rounded-xl flex items-center gap-2 text-sm w-3/4 justify-center transition-colors"
+                                        >
+                                            <Bed size={15} /> View Rooms
+                                        </button>
+                                    </div>
+
                                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-3 ${theme.icon}`}>
                                         <Bed size={19} />
                                     </div>
                                     <div className="font-bold text-lg">{t.type}</div>
-                                    <div className="text-slate-400 text-sm mt-0.5">{t.count} room${t.count === 1 ? '' : 's'}</div>
+                                    <div className="text-slate-400 text-sm mt-0.5">{t.count} room{t.count === 1 ? '' : 's'}</div>
                                     <div className="text-emerald-400 text-xs mt-2">{t.available} available</div>
-                                </button>
+                                </div>
                             );
                         })}
                         <button
@@ -207,7 +323,8 @@ export default function RoomsManagement() {
                                 >
                                     <div className="w-6 h-4 rounded-sm bg-gradient-to-br from-amber-300 to-amber-600 opacity-80" />
                                     <div className="absolute top-3 right-3 text-[10px] uppercase tracking-wide text-slate-400">{room.type}</div>
-                                    <div className="font-mono text-xl font-bold mt-3 tracking-wider">{room.number}</div>
+                                    <div className="font-mono text-xl font-bold mt-2 tracking-wider">{room.number}</div>
+                                    <div className="text-xs text-blue-400 font-semibold mt-0.5">Rent: ₹{room.rent}</div>
                                     <div className="absolute bottom-3 right-3 flex items-center gap-1">
                                         <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
                                         <span className="text-[10px] text-slate-400">{s.label}</span>
@@ -241,8 +358,8 @@ export default function RoomsManagement() {
                                             <span>{selectedRoom.ac ? 'Air Conditioned' : 'Non-AC'}</span>
                                         </div>
                                         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                                            <span className="flex items-center gap-2 text-slate-400"><DollarSign size={15} /> Rent (daily)</span>
-                                            <span>${Number(selectedRoom.rent).toFixed(2)}</span>
+                                            <span className="text-slate-400">Room Rent</span>
+                                            <span className="text-blue-400 font-semibold">₹{selectedRoom.rent}</span>
                                         </div>
                                         <div className="flex items-center justify-between">
                                             <span className="text-slate-400">Status</span>
@@ -260,7 +377,7 @@ export default function RoomsManagement() {
                                             <Pencil size={14} /> Edit
                                         </button>
                                         <button
-                                            onClick={() => deleteRoom(selectedRoom.id)}
+                                            onClick={() => deleteRoomId(selectedRoom.id)}
                                             className="flex-1 flex items-center justify-center gap-1.5 bg-red-600/15 hover:bg-red-600/25 text-red-400 text-sm font-medium py-2.5 rounded-xl transition-colors"
                                         >
                                             <Trash2 size={14} /> Delete
@@ -289,12 +406,67 @@ export default function RoomsManagement() {
                         </div>
                     </div>
                 )}
+
+                {/* EDIT ROOM TYPE MODAL */}
+                {editingRoomType && (
+                    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                        <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm p-6 relative">
+                            <button
+                                onClick={() => setEditingRoomType(null)}
+                                className="absolute top-4 right-4 text-slate-500 hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded"
+                            >
+                                <X size={18} />
+                            </button>
+                            <h2 className="text-lg font-bold mb-4 flex items-center gap-2"><Pencil size={18} className="text-blue-400" /> Edit Room Type</h2>
+                            <form onSubmit={saveRoomType} className="space-y-4">
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1.5">Category Name</label>
+                                    <input
+                                        value={draftRoomType.category || ''}
+                                        onChange={(e) => setDraftRoomType({ ...draftRoomType, category: e.target.value })}
+                                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1.5">Default Type Rent Amount</label>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        value={draftRoomType.rent || ''}
+                                        onChange={(e) => setDraftRoomType({ ...draftRoomType, rent: e.target.value })}
+                                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1.5">AC Status</label>
+                                    <select
+                                        value={draftRoomType.is_ac || 'NON_AC'}
+                                        onChange={(e) => setDraftRoomType({ ...draftRoomType, is_ac: e.target.value as 'AC' | 'NON_AC' })}
+                                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                                    >
+                                        <option value="AC">Air Conditioned (AC)</option>
+                                        <option value="NON_AC">Non-AC</option>
+                                    </select>
+                                </div>
+                                <div className="flex gap-2 pt-1">
+                                    <button type="button" onClick={() => setEditingRoomType(null)} className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-slate-800 hover:bg-slate-700 transition-colors">
+                                        Cancel
+                                    </button>
+                                    <button type="submit" className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-500 text-white transition-colors">
+                                        <Check size={15} /> Save
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );
 }
 
-// Strictly Typed Props interface for the child component
 interface RoomFormProps {
     draft: RoomDraft;
     setDraft: React.Dispatch<React.SetStateAction<RoomDraft>>;
@@ -319,14 +491,19 @@ function RoomForm({ draft, setDraft, types, onSubmit, submitLabel, onCancel }: R
             </div>
 
             <div>
-                <label className="block text-xs text-slate-400 mb-1.5">Room type</label>
+                <label className="block text-xs text-slate-400 mb-1.5">Room type (Type to add new or select)</label>
                 <input
+                    list="room-types-list"
                     value={draft.type}
                     onChange={(e) => setDraft({ ...draft, type: e.target.value })}
-                    placeholder="e.g. Single, Double, Suite"
+                    placeholder="Select or type a room type..."
                     className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
                     required
                 />
+                <datalist id="room-types-list">
+                    {types.map(t => <option key={t} value={t} />)}
+                </datalist>
+                
                 {types.length > 0 && (
                     <div className="flex gap-1.5 mt-2 flex-wrap">
                         {types.map((t) => (
@@ -334,7 +511,7 @@ function RoomForm({ draft, setDraft, types, onSubmit, submitLabel, onCancel }: R
                                 type="button"
                                 key={t}
                                 onClick={() => setDraft({ ...draft, type: t })}
-                                className="text-xs px-2.5 py-1 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+                                className="text-[11px] px-2.5 py-0.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors border border-slate-700"
                             >
                                 {t}
                             </button>
@@ -343,39 +520,44 @@ function RoomForm({ draft, setDraft, types, onSubmit, submitLabel, onCancel }: R
                 )}
             </div>
 
-            <div className="flex gap-3">
-                <div className="flex-1">
-                    <label className="block text-xs text-slate-400 mb-1.5">Rent (daily)</label>
-                    <input
-                        type="number"
-                        value={draft.rent}
-                        onChange={(e) => setDraft({ ...draft, rent: e.target.value })}
-                        placeholder="1000"
-                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-                        required
-                    />
-                </div>
-                <div className="flex-1">
-                    <label className="block text-xs text-slate-400 mb-1.5">Status</label>
-                    <select
-                        value={draft.status}
-                        onChange={(e) => setDraft({ ...draft, status: e.target.value })}
-                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-                    >
-                        <option value="available">Available</option>
-                        <option value="occupied">Occupied</option>
-                        <option value="maintenance">Maintenance</option>
-                    </select>
-                </div>
+            <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Room-Specific Rent Amount (Daily)</label>
+                <input
+                    type="number"
+                    step="0.01"
+                    placeholder="e.g. 1500"
+                    value={draft.rent}
+                    onChange={(e) => setDraft({ ...draft, rent: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                    required
+                />
             </div>
 
-            <button
-                type="button"
-                onClick={() => setDraft({ ...draft, ac: !draft.ac })}
-                className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium border transition-colors ${draft.ac ? 'bg-blue-500/15 border-blue-500/40 text-blue-300' : 'bg-slate-800 border-slate-700 text-slate-400'}`}
-            >
-                <Snowflake size={15} /> {draft.ac ? 'Air Conditioned' : 'Non-AC'}
-            </button>
+            <div className="flex items-center gap-3 bg-slate-900/50 p-2.5 rounded-lg border border-slate-800">
+                <input
+                    type="checkbox"
+                    id="room-ac-checkbox"
+                    checked={draft.ac}
+                    onChange={(e) => setDraft({ ...draft, ac: e.target.checked })}
+                    className="w-4 h-4 rounded border-slate-700 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-slate-900"
+                />
+                <label htmlFor="room-ac-checkbox" className="text-xs text-slate-300 select-none cursor-pointer">
+                    Enable Air Conditioning (AC) for this new type
+                </label>
+            </div>
+
+            <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Status</label>
+                <select
+                    value={draft.status}
+                    onChange={(e) => setDraft({ ...draft, status: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                >
+                    <option value="available">Available</option>
+                    <option value="occupied">Occupied</option>
+                    <option value="maintenance">Maintenance</option>
+                </select>
+            </div>
 
             <div className="flex gap-2 pt-1">
                 <button type="button" onClick={onCancel} className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-slate-800 hover:bg-slate-700 transition-colors">
