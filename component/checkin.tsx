@@ -11,7 +11,7 @@ import {
   Room,
   RoomType,
   CheckIn,
-} from "../lib/api"; 
+} from "../lib/api";
 
 import { api } from "../lib/api";
 import { FileSpreadsheet } from "lucide-react";
@@ -40,7 +40,7 @@ export default function GuestCheckInPage() {
   const [checkinDate, setCheckinDate] = useState("");
   const [checkinTime, setCheckinTime] = useState("");
   const [advanceAmount, setAdvanceAmount] = useState<number>(0);
-  const [payMode, setPayMode] = useState("CASH");
+  const [payMode, setPayMode] = useState<"CASH" | "CARD" | "UPI" | "NET_BANKING">("CASH");
   const [remarks, setRemarks] = useState("");
 
   // UI state hooks
@@ -93,7 +93,7 @@ export default function GuestCheckInPage() {
         (room) => room.room_type === selectedRoomType.id && room.status === "AVAILABLE"
       );
       setAvailableRoomsFiltered(filtered);
-      setSelectedRoomId(""); 
+      setSelectedRoomId("");
     } else {
       setAvailableRoomsFiltered([]);
     }
@@ -140,7 +140,7 @@ export default function GuestCheckInPage() {
     }
 
     const headers = ["Guest Name", "Mobile No", "Room No", "Check-In Date", "Check-In Time", "Advance Paid (INR)", "Pending Amount (INR)", "Payment Mode"];
-    
+
     const rows = filteredCheckIns.map((item) => {
       const name = item.customer_name || `ID: ${item.customer}`;
       const mobile = item.mobile_no || "N/A";
@@ -162,11 +162,11 @@ export default function GuestCheckInPage() {
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    
+
     link.setAttribute("href", url);
     link.setAttribute("download", `CheckIn_Report_${startDate || "Start"}_to_${endDate || "End"}.csv`);
     document.body.appendChild(link);
-    
+
     link.click();
     document.body.removeChild(link);
   };
@@ -175,16 +175,16 @@ export default function GuestCheckInPage() {
   const handleDownloadReceipt = async (checkinId: string | number) => {
     try {
       const response = await api.get(`/reservations/checkins/${checkinId}/download-receipt/`, {
-        responseType: "blob" 
+        responseType: "blob"
       });
 
       const blob = new Blob([response.data], { type: "application/pdf" });
       const url = window.URL.createObjectURL(blob);
-      
+
       const link = document.createElement("a");
       link.href = url;
       link.download = `CheckIn_Receipt_ARR-${String(checkinId).padStart(6, '0')}.pdf`;
-      
+
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -210,14 +210,15 @@ export default function GuestCheckInPage() {
       customer: selectedCustomer.id,
       room: parseInt(selectedRoomId),
       checkin_date: checkinDate,
-      checkin_time: `${checkinTime}:00`, 
+      checkin_time: `${checkinTime}:00`,
       base_daily_rent: roomRent.toFixed(2),
-      advance_amount: advanceAmount.toFixed(2),   
+      advance_amount: advanceAmount.toFixed(2),
       pending_amount: pendingBalance.toFixed(2),
-      total_amount: roomRent.toFixed(2),          
+      total_amount: roomRent.toFixed(2),
       pay_mode: payMode,
       remarks: remarks || null,
       status: "CHECKED_IN" as const
+
     };
 
     try {
@@ -226,7 +227,7 @@ export default function GuestCheckInPage() {
 
       const updatedCheckins = await getCheckIns();
       const rawRooms = await getRooms();
-      
+
       setCheckInsList(updatedCheckins.filter((item) => item.status === "CHECKED_IN"));
       setRooms(rawRooms.filter((room) => room.status === "AVAILABLE"));
 
@@ -246,7 +247,7 @@ export default function GuestCheckInPage() {
     } catch (err: any) {
       console.error("Check-in registration failure details:", err);
       setError(
-        err.response?.data 
+        err.response?.data
           ? typeof err.response.data === "object"
             ? JSON.stringify(err.response.data)
             : err.response.data
@@ -276,7 +277,7 @@ export default function GuestCheckInPage() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        
+
         {/* Selection Columns Panel */}
         <div className="space-y-6">
           <div className="bg-[#0e162d] border border-slate-800 rounded-lg p-5">
@@ -296,9 +297,8 @@ export default function GuestCheckInPage() {
                 <div
                   key={cust.id}
                   onClick={() => setSelectedCustomer(cust)}
-                  className={`p-3 rounded border transition-all cursor-pointer ${
-                    selectedCustomer?.id === cust.id ? "bg-blue-600/20 border-blue-500" : "bg-[#070b19] border-slate-800/80 hover:border-slate-700"
-                  }`}
+                  className={`p-3 rounded border transition-all cursor-pointer ${selectedCustomer?.id === cust.id ? "bg-blue-600/20 border-blue-500" : "bg-[#070b19] border-slate-800/80 hover:border-slate-700"
+                    }`}
                 >
                   <p className="font-bold text-sm capitalize">{cust.customer_name}</p>
                   <p className="text-xs text-slate-400 mt-0.5">Mob: {cust.mobile_no}</p>
@@ -318,9 +318,8 @@ export default function GuestCheckInPage() {
                   key={type.id}
                   type="button"
                   onClick={() => setSelectedRoomType(type)}
-                  className={`flex flex-col items-center justify-center p-4 rounded-lg border transition-all ${
-                    selectedRoomType?.id === type.id ? "bg-blue-600/20 border-blue-500 text-blue-400" : "bg-[#070b19] border-slate-800 text-slate-300 hover:border-slate-700"
-                  }`}
+                  className={`flex flex-col items-center justify-center p-4 rounded-lg border transition-all ${selectedRoomType?.id === type.id ? "bg-blue-600/20 border-blue-500 text-blue-400" : "bg-[#070b19] border-slate-800 text-slate-300 hover:border-slate-700"
+                    }`}
                 >
                   <span className="text-sm font-semibold capitalize">{type.category}</span>
                 </button>
@@ -333,7 +332,7 @@ export default function GuestCheckInPage() {
         <form onSubmit={handleCompleteCheckIn} className="bg-[#0e162d] border border-slate-800 rounded-lg p-5 flex flex-col justify-between">
           <div>
             <h2 className="text-blue-500 font-semibold text-base mb-4">Check-in Execution List</h2>
-            
+
             <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
                 <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">Guest Name</label>
@@ -379,7 +378,7 @@ export default function GuestCheckInPage() {
               </div>
               <div>
                 <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">Payment Mode</label>
-                <select value={payMode} onChange={(e) => setPayMode(e.target.value)} className="w-full bg-[#070b19] border border-slate-700 rounded px-3 py-2 text-sm text-white focus:outline-none">
+                <select value={payMode} onChange={(e) => setPayMode(e.target.value as "CASH" | "CARD" | "UPI" | "NET_BANKING")} className="w-full bg-[#070b19] border border-slate-700 rounded px-3 py-2 text-sm text-white focus:outline-none">
                   <option value="CASH">Cash</option>
                   <option value="CARD">Card</option>
                   <option value="UPI">UPI</option>
@@ -408,15 +407,15 @@ export default function GuestCheckInPage() {
 
       {/* Active Check-ins Live Database Panel Grid Table */}
       <div className="bg-[#0e162d] border border-slate-800 rounded-lg p-5">
-        
+
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
           <h2 className="text-lg font-semibold">Active Check-ins Dashboard</h2>
-          
+
           {/* DATE FILTER CONTROLS & EXCEL BUTTON BAR */}
           <div className="flex flex-wrap items-center gap-3 bg-[#070b19]/60 p-3 rounded-xl border border-slate-800">
             <div className="flex items-center gap-2 text-xs">
               <span className="text-gray-400 uppercase font-medium">From:</span>
-              <input 
+              <input
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
@@ -425,14 +424,14 @@ export default function GuestCheckInPage() {
             </div>
             <div className="flex items-center gap-2 text-xs">
               <span className="text-gray-400 uppercase font-medium">To:</span>
-              <input 
+              <input
                 type="date"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
                 className="bg-[#070b19] border border-slate-700 rounded-lg p-1.5 text-white focus:outline-none focus:border-blue-500 text-xs"
               />
             </div>
-            
+
             {(startDate || endDate) && (
               <button
                 onClick={() => { setStartDate(""); setEndDate(""); }}
