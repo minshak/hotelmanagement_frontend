@@ -1,20 +1,20 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   getCustomers,
   getRooms,
   getRoomTypes,
   getCheckIns,
-  createCheckIn, // Imported helper used below
+  createCheckIn,
   Customer,
   Room,
   RoomType,
   CheckIn,
 } from "../lib/api"; 
 
-// Assuming 'api' is exported from your lib/api for fallback handlers like file streams
 import { api } from "../lib/api";
+import { FileSpreadsheet } from "lucide-react";
 
 export default function GuestCheckInPage() {
   const [isMounted, setIsMounted] = useState(false);
@@ -31,6 +31,10 @@ export default function GuestCheckInPage() {
   const [selectedRoomType, setSelectedRoomType] = useState<RoomType | null>(null);
   const [availableRoomsFiltered, setAvailableRoomsFiltered] = useState<Room[]>([]);
   const [selectedRoomId, setSelectedRoomId] = useState<string>("");
+
+  // Date Range Filter States
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
 
   // Input bindings
   const [checkinDate, setCheckinDate] = useState("");
@@ -104,6 +108,69 @@ export default function GuestCheckInPage() {
       cust.mobile_no?.includes(searchTerm)
   );
 
+  // Dynamic filter for active check-ins based on date selection
+  const filteredCheckIns = useMemo(() => {
+    return checkInsList.filter((record) => {
+      if (!record.checkin_date) return true;
+
+      const recordDate = new Date(record.checkin_date);
+      recordDate.setHours(0, 0, 0, 0);
+
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        if (recordDate < start) return false;
+      }
+
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(0, 0, 0, 0);
+        if (recordDate > end) return false;
+      }
+
+      return true;
+    });
+  }, [checkInsList, startDate, endDate]);
+
+  // Client-side Excel / CSV engine handler 
+  const handleExportToExcel = () => {
+    if (filteredCheckIns.length === 0) {
+      alert("No sorted check-in report data available to export.");
+      return;
+    }
+
+    const headers = ["Guest Name", "Mobile No", "Room No", "Check-In Date", "Check-In Time", "Advance Paid (INR)", "Pending Amount (INR)", "Payment Mode"];
+    
+    const rows = filteredCheckIns.map((item) => {
+      const name = item.customer_name || `ID: ${item.customer}`;
+      const mobile = item.mobile_no || "N/A";
+      const roomNo = item.room_no || item.room;
+
+      return [
+        `"${name}"`,
+        `"${mobile}"`,
+        `"Room ${roomNo}"`,
+        `"${item.checkin_date}"`,
+        `"${item.checkin_time}"`,
+        Number(item.advance_amount).toFixed(2),
+        Number(item.pending_amount).toFixed(2),
+        `"${item.pay_mode}"`
+      ];
+    });
+
+    const csvContent = [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    
+    link.setAttribute("href", url);
+    link.setAttribute("download", `CheckIn_Report_${startDate || "Start"}_to_${endDate || "End"}.csv`);
+    document.body.appendChild(link);
+    
+    link.click();
+    document.body.removeChild(link);
+  };
+
   // Authenticated binary file engine handler via Axios instance
   const handleDownloadReceipt = async (checkinId: string | number) => {
     try {
@@ -137,7 +204,7 @@ export default function GuestCheckInPage() {
       return;
     }
 
-    setLoading(true);
+    loading || setLoading(true);
 
     const payload = {
       customer: selectedCustomer.id,
@@ -154,7 +221,6 @@ export default function GuestCheckInPage() {
     };
 
     try {
-      // Fixed to call the proper createCheckIn abstraction layer instead of raw api.post
       const res = await createCheckIn(payload);
       const newlyCreatedId = res?.id;
 
@@ -342,7 +408,49 @@ export default function GuestCheckInPage() {
 
       {/* Active Check-ins Live Database Panel Grid Table */}
       <div className="bg-[#0e162d] border border-slate-800 rounded-lg p-5">
-        <h2 className="text-lg font-semibold mb-4">Active Check-ins Dashboard</h2>
+        
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+          <h2 className="text-lg font-semibold">Active Check-ins Dashboard</h2>
+          
+          {/* DATE FILTER CONTROLS & EXCEL BUTTON BAR */}
+          <div className="flex flex-wrap items-center gap-3 bg-[#070b19]/60 p-3 rounded-xl border border-slate-800">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-gray-400 uppercase font-medium">From:</span>
+              <input 
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="bg-[#070b19] border border-slate-700 rounded-lg p-1.5 text-white focus:outline-none focus:border-blue-500 text-xs"
+              />
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-gray-400 uppercase font-medium">To:</span>
+              <input 
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="bg-[#070b19] border border-slate-700 rounded-lg p-1.5 text-white focus:outline-none focus:border-blue-500 text-xs"
+              />
+            </div>
+            
+            {(startDate || endDate) && (
+              <button
+                onClick={() => { setStartDate(""); setEndDate(""); }}
+                className="text-xs bg-slate-800 hover:bg-slate-700 px-2 py-1.5 rounded-lg text-gray-400 hover:text-white transition"
+              >
+                Clear
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={handleExportToExcel}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ml-auto md:ml-2 shadow-md"
+            >
+              <FileSpreadsheet size={14} /> EXPORT EXCEL
+            </button>
+          </div>
+        </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm text-slate-300">
@@ -359,7 +467,7 @@ export default function GuestCheckInPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800">
-              {checkInsList.map((item) => (
+              {filteredCheckIns.map((item) => (
                 <tr key={item.id} className="hover:bg-slate-800/30">
                   <td className="px-4 py-3 font-semibold capitalize">{item.customer_name || `ID: ${item.customer}`}</td>
                   <td className="px-4 py-3 text-slate-400">{item.mobile_no || "N/A"}</td>
@@ -386,7 +494,7 @@ export default function GuestCheckInPage() {
                   </td>
                 </tr>
               ))}
-              {checkInsList.length === 0 && (
+              {filteredCheckIns.length === 0 && (
                 <tr>
                   <td colSpan={8} className="text-center py-6 text-slate-500">No active check-in registrations found.</td>
                 </tr>

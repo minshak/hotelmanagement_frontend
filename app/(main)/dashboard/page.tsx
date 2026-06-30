@@ -42,8 +42,15 @@ export default function Dashboard() {
       if (storedUser) {
         try {
           const parsedUser = JSON.parse(storedUser);
-          if (parsedUser && parsedUser.name) {
-            setUserName(parsedUser.name);
+          
+          // Build the name dynamically from first_name and last_name matching your API response structure
+          if (parsedUser) {
+            const firstName = parsedUser.first_name || "";
+            const lastName = parsedUser.last_name || "";
+            const fullName = `${firstName} ${lastName}`.trim();
+            
+            // Fallback to username if names aren't filled out, otherwise default to "User"
+            setUserName(fullName || parsedUser.username || "User");
           }
         } catch (error) {
           console.error("Error parsing user data from localStorage", error);
@@ -184,7 +191,6 @@ export default function Dashboard() {
           <div>
             {/* DYNAMIC WELCOME GREETING */}
             <h1 className="text-5xl font-bold">Welcome, {userName}.</h1>
-           
           </div>
 
           <div>

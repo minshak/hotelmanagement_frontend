@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { User, Lock, Eye, EyeOff, Star } from "lucide-react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
-import { api, login } from "../lib/api"; 
+import { login } from "../lib/api"; 
 
 export default function LoginPage() {
   const [code, setCode] = useState("");
@@ -16,7 +16,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (localStorage.getItem("isLoggedIn") === "true") {
-      router.push("/dashboard");
+      router.push("/");
     }
   }, [router]);
 
@@ -33,7 +33,7 @@ export default function LoginPage() {
       setLoading(true);
 
       // Fixed: Now calling the named login function directly
-      const data = await login({ code, password });
+      const data = await login({ username: code, password });
 
       console.log("TOKEN RESPONSE:", data);
 
@@ -42,9 +42,8 @@ export default function LoginPage() {
         localStorage.setItem("isLoggedIn", "true");
 
         if (data.user) {
-          localStorage.setItem("code", data.user.code || "");
-          localStorage.setItem("name", data.user.name || "");
-          localStorage.setItem("logo", data.user.logo || "");
+          localStorage.setItem("username", data.user.username || "");
+          localStorage.setItem("name", `${data.user.first_name} ${data.user.last_name}`.trim());
         }
 
         router.push("/dashboard");

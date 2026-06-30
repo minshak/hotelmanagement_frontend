@@ -42,7 +42,7 @@ api.interceptors.response.use(
       localStorage.removeItem("refresh");
       localStorage.removeItem("user");
 
-      window.location.href = "/login";
+      window.location.href = "/";
     }
 
     return Promise.reject(error);
@@ -52,7 +52,7 @@ api.interceptors.response.use(
 /* ===================== LOGIN ===================== */
 
 export interface LoginPayload {
-  code: string;
+  username: string;
   password: string;
 }
 
@@ -63,15 +63,14 @@ export interface LoginResponse {
   message: string;
   user: {
     id: number;
-    name: string;
-    code: string;
+    username: string;
+    first_name: string;
+    last_name: string;
     email: string;
-    mobile: string;
-    gstin: string;
-    logo: string;
+    mobile: string | null;
     is_superuser: boolean;
     is_staff: boolean;
-    active: boolean;
+    is_active: boolean;
   };
 }
 
@@ -102,7 +101,7 @@ export const logout = () => {
   localStorage.removeItem("refresh");
   localStorage.removeItem("user");
 
-  window.location.href = "/login";
+  window.location.href = "/";
 };
 
 /* ============================ TYPES ============================ */

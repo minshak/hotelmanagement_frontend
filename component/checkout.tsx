@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { api, getRooms, getRoomTypes } from "../lib/api";
-import { Users, Receipt, Calendar, Clock, CreditCard, ChevronLeft, Banknote, Percent, CheckCircle2, History, X, Download } from "lucide-react";
+import { Users, Receipt, Calendar, Clock, CreditCard, ChevronLeft, Banknote, Percent, CheckCircle2, History, X, Download, FileSpreadsheet } from "lucide-react";
 
 interface CheckInRecord {
   id: number;
@@ -75,6 +75,10 @@ export default function GuestCheckout() {
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
   const [selectedRecord, setSelectedRecord] = useState<CheckInRecord | null>(null);
 
+  // Date Filtering State
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+
   // Receipt Modal State
   const [receiptData, setReceiptData] = useState<ReceiptPayload | null>(null);
   const [isFetchingReceipt, setIsFetchingReceipt] = useState(false);
@@ -125,6 +129,30 @@ export default function GuestCheckout() {
       return roomA.localeCompare(roomB, undefined, { numeric: true, sensitivity: "base" });
     });
   }, [checkins]);
+
+  // Dynamic filter for checkout logs based on date selection
+  const filteredCheckouts = useMemo(() => {
+    return checkouts.filter((record) => {
+      if (!record.checkout_date) return true;
+      
+      const recordDate = new Date(record.checkout_date);
+      recordDate.setHours(0, 0, 0, 0);
+
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        if (recordDate < start) return false;
+      }
+
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(0, 0, 0, 0);
+        if (recordDate > end) return false;
+      }
+
+      return true;
+    });
+  }, [checkouts, startDate, endDate]);
 
   const currentRoomRent = useMemo(() => {
     if (!selectedRecord) return 0;
@@ -188,28 +216,23 @@ export default function GuestCheckout() {
     }
   };
 
-  // NEW DOWNLOAD LOGIC
   const handleDownloadReceipt = async () => {
     if (!activeCheckoutId) return;
     setIsDownloadingPdf(true);
     try {
-      // It's critical to tell axios to handle this as a binary blob
       const response = await api.get(`/reservations/checkouts/${activeCheckoutId}/download-receipt/`, {
         responseType: 'blob',
       });
 
-      // Process raw data into a local downloadeable object URL
       const blob = new Blob([response.data], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
       
-      // Auto formatting file title standard matching backend
       link.setAttribute('download', `Receipt_REC-${String(activeCheckoutId).padStart(6, '0')}.pdf`);
       document.body.appendChild(link);
       link.click();
       
-      // Clean up DOM objects safely
       link.parentNode?.removeChild(link);
       window.URL.revokeObjectURL(url);
     } catch (err) {
@@ -218,6 +241,51 @@ export default function GuestCheckout() {
     } finally {
       setIsDownloadingPdf(false);
     }
+  };
+
+  // EXCEL / CSV GENERATION LOGIC
+  const handleExportToExcel = () => {
+    if (filteredCheckouts.length === 0) {
+      alert("No sorted report data available to export.");
+      return;
+    }
+
+    // Define table headers
+    const headers = ["Room No", "Guest Name", "Mobile No", "Checkout Date", "Checkout Time", "Duration (Days)", "Settled Amount (INR)", "Payment Mode", "Remarks"];
+    
+    // Map processed row data strings securely
+    const rows = filteredCheckouts.map((out) => {
+      const nestedCheckin = typeof out.checkin === "object" ? out.checkin : null;
+      const roomNo = nestedCheckin?.room_no || out.room_no || "N/A";
+      const name = nestedCheckin?.customer_name || out.customer_name || "Archived Guest";
+      const mobile = nestedCheckin?.mobile_no || "N/A";
+      const remarksText = out.remarks ? out.remarks.replace(/"/g, '""') : ""; // Escape internal quotes safely
+
+      return [
+        `"Room ${roomNo}"`,
+        `"${name}"`,
+        `"${mobile}"`,
+        `"${out.checkout_date}"`,
+        `"${out.checkout_time}"`,
+        out.total_days,
+        Number(out.balance_paid).toFixed(2),
+        `"${out.pay_mode}"`,
+        `"${remarksText}"`
+      ];
+    });
+
+    // Assemble dynamic document body structure layout cleanly
+    const csvContent = [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    
+    link.setAttribute("href", url);
+    link.setAttribute("download", `Checkout_Report_${startDate || "Start"}_to_${endDate || "End"}.csv`);
+    document.body.appendChild(link);
+    
+    link.click();
+    document.body.removeChild(link);
   };
 
   const handleSaveCheckout = async (e: React.FormEvent) => {
@@ -324,7 +392,6 @@ export default function GuestCheckout() {
               </div>
             </div>
 
-            {/* TWO BUTTON FOOTER GRID FOR ACTIONS */}
             <div className="grid grid-cols-2 gap-3 pt-2">
               <button 
                 onClick={() => window.print()}
@@ -407,9 +474,52 @@ export default function GuestCheckout() {
 
           {/* CHECKOUT LOG & HISTORY WITH RECEIPT ACTION CONTROL */}
           <div className="bg-[#0d1735] p-6 rounded-2xl border border-blue-900">
-            <h2 className="text-2xl font-bold mb-6 flex items-center gap-2 text-emerald-400">
-              <History /> Checkout Log & History
-            </h2>
+            
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+              <h2 className="text-2xl font-bold flex items-center gap-2 text-emerald-400">
+                <History /> Checkout Log & History
+              </h2>
+              
+              {/* DATE FILTER CONTROLS BAR */}
+              <div className="flex flex-wrap items-center gap-3 bg-slate-900/60 p-3 rounded-xl border border-blue-900/40">
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-gray-400 uppercase font-medium">From:</span>
+                  <input 
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-white focus:outline-none focus:border-blue-500 text-xs"
+                  />
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-gray-400 uppercase font-medium">To:</span>
+                  <input 
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-white focus:outline-none focus:border-blue-500 text-xs"
+                  />
+                </div>
+                
+                {(startDate || endDate) && (
+                  <button
+                    onClick={() => { setStartDate(""); setEndDate(""); }}
+                    className="text-xs bg-slate-800 hover:bg-slate-700 px-2 py-1.5 rounded-lg text-gray-400 hover:text-white transition"
+                  >
+                    Clear
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleExportToExcel}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ml-auto md:ml-2 shadow-md"
+                >
+                  <FileSpreadsheet size={14} /> EXPORT EXCEL
+                </button>
+              </div>
+            </div>
+
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
@@ -424,8 +534,8 @@ export default function GuestCheckout() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-blue-900/30 text-sm">
-                  {checkouts.length > 0 ? (
-                    checkouts.map((out) => {
+                  {filteredCheckouts.length > 0 ? (
+                    filteredCheckouts.map((out) => {
                       const nestedCheckin = typeof out.checkin === "object" ? out.checkin : null;
                       const displayRoom = nestedCheckin?.room_no || out.room_no || "N/A";
                       const displayName = nestedCheckin?.customer_name || out.customer_name || "Archived Guest";
@@ -472,7 +582,7 @@ export default function GuestCheckout() {
                   ) : (
                     <tr>
                       <td colSpan={7} className="py-12 text-center text-gray-500 text-base">
-                        No previous checkout records found.
+                        No checkout records matched the selected filters.
                       </td>
                     </tr>
                   )}
@@ -494,7 +604,6 @@ export default function GuestCheckout() {
           </button>
 
           <form onSubmit={handleSaveCheckout} className="space-y-6">
-            {/* Header Metadata Panel */}
             <div className="bg-gradient-to-r from-[#0a153a] to-[#060f2b] p-6 rounded-2xl border border-blue-500/30 shadow-xl">
               <h3 className="text-xs font-bold text-blue-400 tracking-widest uppercase mb-4 flex items-center gap-2">
                 <Receipt size={14} /> Registered Check-in Details
@@ -527,7 +636,6 @@ export default function GuestCheckout() {
               </div>
             </div>
 
-            {/* Transaction Interactive Form Details */}
             <div className="bg-[#07102a] p-6 rounded-2xl border border-slate-800 space-y-6">
               <h3 className="text-base font-bold text-slate-200 border-b border-slate-800 pb-2">Checkout Operations</h3>
 
@@ -661,7 +769,6 @@ export default function GuestCheckout() {
               </div>
             </div>
 
-            {/* Actions Footer */}
             <div className="flex justify-end gap-4">
               <button
                 type="button"
